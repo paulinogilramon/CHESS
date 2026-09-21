@@ -69,6 +69,9 @@ type Game struct {
 	fen       bool
 	status    string
 	logs      []string
+	aiSide    engine.Color
+	thinking  bool
+	aiCh      chan engine.Move
 }
 
 ///
@@ -101,6 +104,10 @@ func (g *Game) resetLogs() {
 ///   Reset restarts the game from the initial position.
 /// </summary>
 func (g *Game) Reset() {
+	if g.thinking {
+		g.status = "Wait for the engine."
+		return
+	}
 	g.board = engine.NewStart()
 	g.history = g.history[:0]
 	g.selected = -1
@@ -115,6 +122,10 @@ func (g *Game) Reset() {
 ///   Undo takes back the most recent move, if any.
 /// </summary>
 func (g *Game) Undo() {
+	if g.thinking {
+		g.status = "Wait for the engine."
+		return
+	}
 	if len(g.history) == 0 {
 		g.status = "Nothing to undo."
 		return
@@ -151,6 +162,19 @@ func (g *Game) Update() error {
 			g.anim = nil
 		}
 	}
+	g.engineMove()
+	if g.thinking {
+		select {
+		case mv := <-g.aiCh:
+			g.thinking = false
+			if mv != 0 && engine.CanMove(g.board, mv) {
+				g.play(mv)
+			} else {
+				g.status = "Engine produced no move; play on."
+			}
+		default:
+		}
+	}
 	return nil
 }
 
@@ -177,6 +201,19 @@ func (g *Game) handleKeys() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyF) {
 		g.fen = !g.fen
 	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyA) {
+		if g.thinking {
+			g.status = "Engine is still thinking."
+			return
+		}
+		if g.aiSide == 0 {
+			g.aiSide = g.board.Stm
+			g.status = "Engine takes " + colorWord(g.aiSide) + "."
+		} else {
+			g.aiSide = 0
+			g.status = "Engine off; both sides are human."
+		}
+	}
 	if ebiten.IsKeyPressed(ebiten.KeyControl) && inpututil.IsKeyJustPressed(ebiten.KeyQ) {
 		g.quit = true
 	}
@@ -189,6 +226,9 @@ func (g *Game) handleKeys() {
 /// </summary>
 func (g *Game) handleMouse() {
 	if !inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
+		return
+	}
+	if g.thinking {
 		return
 	}
 	mx, my := ebiten.CursorPosition()
@@ -332,6 +372,29 @@ func (g *Game) lastPromoTarget() int {
 		}
 	}
 	return -1
+}
+
+///
+/// <summary>
+///   engineMove fires an asynchronous search when it is the engine side's
+///   turn, and is a no-op otherwise.
+/// </summary>
+func (g *Game) engineMove() {
+	if g.aiSide == 0 || g.thinking {
+		return
+	}
+	if g.anim != nil || g.board.Stm != g.aiSide {
+		return
+	}
+	if len(engine.GenerateLegal(g.board)) == 0 {
+		return
+	}
+	g.thinking = true
+	g.status = "Engine thinking..."
+	g.aiCh = make(chan engine.Move, 1)
+	go func() {
+		g.aiCh <- engine.FindBestMove(g.board, 4, 1200)
+	}()
 }
 
 ///

@@ -323,6 +323,9 @@ func drawStatus(img *ebiten.Image, g *Game) {
 	if engine.IsInCheck(g.board, g.board.Stm) {
 		header += " in check"
 	}
+	if g.aiSide != 0 {
+		header += "  vs engine(" + colorWord(g.aiSide) + ")"
+	}
 	text.Draw(img, header, midFace, 24, statusY+18, colLine)
 	text.Draw(img, g.status, smallFace, 24, statusY+44, colDim)
 }
@@ -335,7 +338,7 @@ func drawStatus(img *ebiten.Image, g *Game) {
 /// <param name="g">Game state.</param>
 func drawInfo(img *ebiten.Image, g *Game) {
 	text.Draw(img, g.sortedLogs(), smallFace, 24, infoY, colLine)
-	help := "n=new  u=undo  m=hints  f=fen  Esc=clear  Ctrl+Q=quit"
+	help := "n=new  u=undo  m=hints  f=fen  A=engine  Esc=clear  Ctrl+Q=quit"
 	text.Draw(img, help, smallFace, 24, infoY+28, colDim)
 	if g.fen {
 		text.Draw(img, engine.ToFen(g.board), smallFace, 24, infoY+54, colLine)
