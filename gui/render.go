@@ -29,31 +29,26 @@ var (
 	colHint    = color.RGBA{0x2A, 0xC6, 0x5C, 0x4C}
 	colDot     = color.RGBA{0x8F, 0xF0, 0xA7, 0xE0}
 	colCheck   = color.RGBA{0xE8, 0x4B, 0x3A, 0xB0}
-	colWhite   = color.RGBA{0xFF, 0xFF, 0xFF, 0xFF}
-	colBlack   = color.RGBA{0x1F, 0x1F, 0x25, 0xFF}
-	colOutline = color.RGBA{0x00, 0x00, 0x00, 0xB8}
-	colLine    = color.RGBA{0xEE, 0xE8, 0xE0, 0xFF}
-	colDim     = color.RGBA{0xA8, 0xA2, 0x9A, 0xFF}
+	colLine    = color.RGBA{0xE8, 0xE4, 0xD8, 0xFF}
+	colDim     = color.RGBA{0xB9, 0xB3, 0xA7, 0xFF}
 )
 
 ///
 /// <summary>
-///   pieceFace and smallFace are the loaded font faces for piece glyphs and
-///   UI text respectively.
+///   smallFace and midFace are the loaded font faces for UI text.
 /// </summary>
 var (
-	pieceFace font.Face
 	smallFace font.Face
 	midFace   font.Face
 )
 
 ///
 /// <summary>
-///   loadFaces initializes the font stack, preferring system fonts that
-///   contain the chess piece glyphs and falling back to a bitmap font.
+///   loadFaces initializes the font stack, preferring a system font and
+///   falling back to a bitmap font.
 /// </summary>
 func loadFaces() {
-	if pieceFace != nil {
+	if smallFace != nil {
 		return
 	}
 	windir := os.Getenv("WINDIR")
@@ -66,7 +61,6 @@ func loadFaces() {
 		filepath.Join(windir, `Fonts\segoeui.ttf`),
 		filepath.Join(windir, `Fonts\arial.ttf`),
 	}
-	pieceFace = basicfont.Face7x13
 	smallFace = basicfont.Face7x13
 	midFace = basicfont.Face7x13
 	for _, path := range candidates {
@@ -78,7 +72,6 @@ func loadFaces() {
 		if err != nil {
 			continue
 		}
-		pieceFace, _ = opentype.NewFace(tt, &opentype.FaceOptions{Size: 32, DPI: 96, Hinting: font.HintingFull})
 		pf, _ := opentype.NewFace(tt, &opentype.FaceOptions{Size: 34, DPI: 96, Hinting: font.HintingFull})
 		midFace = pf
 		sf, err := opentype.NewFace(tt, &opentype.FaceOptions{Size: 18, DPI: 96, Hinting: font.HintingFull})
@@ -201,53 +194,19 @@ func getPieceSprite(typ int8, col engine.Color) *pieceSprite {
 
 ///
 /// <summary>
-///   buildPieceSprite renders a glyph with an outline and locates the visible
-///   ink bounding box so the sprite centers its artwork, not its font metrics.
+///   buildPieceSprite renders a piece from procedural shapes and returns it
+///   tagged with the offset to the center of its visible ink.
 /// </summary>
 /// <param name="typ">Piece type.</param>
 /// <param name="col">Piece color.</param>
 /// <returns>The built sprite.</returns>
 func buildPieceSprite(typ int8, col engine.Color) *pieceSprite {
-	str := string(glyphRune(typ, col))
-	b, _ := font.BoundString(pieceFace, str)
-	pad := 2
-	w := (b.Max.X - b.Min.X).Ceil() + 2*pad
-	h := (b.Max.Y - b.Min.Y).Ceil() + 2*pad
-	img := ebiten.NewImage(w, h)
-	img.Clear()
-	baseY := pad - b.Min.Y.Floor()
-	clr := colWhite
-	if col != engine.White {
-		clr = colBlack
+	rgba, loX, loY, hiX, hiY := renderPiece(typ, col, pieceSize)
+	return &pieceSprite{
+		img: ebiten.NewImageFromImage(rgba),
+		cx:  float64(loX+hiX) / 2,
+		cy:  float64(loY+hiY) / 2,
 	}
-	for _, off := range [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
-		text.Draw(img, str, pieceFace, pad+off[0], baseY+off[1], colOutline)
-	}
-	text.Draw(img, str, pieceFace, pad, baseY, clr)
-
-	loX, loY := w, h
-	hiX, hiY := 0, 0
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			_, _, _, a := img.At(x, y).RGBA()
-			if a == 0 {
-				continue
-			}
-			if x < loX {
-				loX = x
-			}
-			if x > hiX {
-				hiX = x
-			}
-			if y < loY {
-				loY = y
-			}
-			if y > hiY {
-				hiY = y
-			}
-		}
-	}
-	return &pieceSprite{img: img, cx: float64(loX+hiX) / 2, cy: float64(loY+hiY) / 2}
 }
 
 ///
@@ -428,37 +387,6 @@ func pixelToSquare(mx, my int) (int, bool) {
 		return 0, false
 	}
 	return engine.Sq(col, 7-row), true
-}
-
-///
-/// <summary>
-///   glyphRune maps a piece type and color to its Unicode symbol.
-/// </summary>
-/// <param name="typ">Piece type.</param>
-/// <param name="c">Piece color.</param>
-/// <returns>The piece glyph rune.</returns>
-func glyphRune(typ int8, c engine.Color) rune {
-	var base rune
-	if c == engine.White {
-		base = 0x2654
-	} else {
-		base = 0x265A
-	}
-	switch typ {
-	case engine.King:
-		return base
-	case engine.Queen:
-		return base + 1
-	case engine.Rook:
-		return base + 2
-	case engine.Bishop:
-		return base + 3
-	case engine.Knight:
-		return base + 4
-	case engine.Pawn:
-		return base + 5
-	}
-	return rune('?')
 }
 
 ///
