@@ -2,6 +2,7 @@ package main
 
 import (
 	"image/color"
+	"math"
 	"os"
 	"path/filepath"
 
@@ -259,7 +260,7 @@ func buildPieceSprite(typ int8, col engine.Color) *pieceSprite {
 /// <param name="cy">Center y.</param>
 func drawPieceAt(img *ebiten.Image, sp *pieceSprite, cx, cy float64) {
 	opts := &ebiten.DrawImageOptions{}
-	opts.GeoM.Translate(cx-sp.cx, cy-sp.cy)
+	opts.GeoM.Translate(math.Round(cx-sp.cx), math.Round(cy-sp.cy))
 	img.DrawImage(sp.img, opts)
 }
 
