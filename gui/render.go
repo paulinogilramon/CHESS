@@ -77,7 +77,7 @@ func loadFaces() {
 		if err != nil {
 			continue
 		}
-		pieceFace, _ = opentype.NewFace(tt, &opentype.FaceOptions{Size: 44, DPI: 96, Hinting: font.HintingFull})
+		pieceFace, _ = opentype.NewFace(tt, &opentype.FaceOptions{Size: 32, DPI: 96, Hinting: font.HintingFull})
 		pf, _ := opentype.NewFace(tt, &opentype.FaceOptions{Size: 34, DPI: 96, Hinting: font.HintingFull})
 		midFace = pf
 		sf, err := opentype.NewFace(tt, &opentype.FaceOptions{Size: 18, DPI: 96, Hinting: font.HintingFull})
@@ -209,7 +209,7 @@ func getPieceSprite(typ int8, col engine.Color) *pieceSprite {
 func buildPieceSprite(typ int8, col engine.Color) *pieceSprite {
 	str := string(glyphRune(typ, col))
 	b, _ := font.BoundString(pieceFace, str)
-	pad := 3
+	pad := 2
 	w := (b.Max.X - b.Min.X).Ceil() + 2*pad
 	h := (b.Max.Y - b.Min.Y).Ceil() + 2*pad
 	img := ebiten.NewImage(w, h)
@@ -219,7 +219,7 @@ func buildPieceSprite(typ int8, col engine.Color) *pieceSprite {
 	if col != engine.White {
 		clr = colBlack
 	}
-	for _, off := range [][2]int{{2, 0}, {-2, 0}, {0, 2}, {0, -2}} {
+	for _, off := range [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
 		text.Draw(img, str, pieceFace, pad+off[0], baseY+off[1], colOutline)
 	}
 	text.Draw(img, str, pieceFace, pad, baseY, clr)
