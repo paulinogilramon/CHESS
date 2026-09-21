@@ -155,7 +155,117 @@ func drawSquares(img *ebiten.Image, g *Game) {
 
 ///
 /// <summary>
-///   drawPieces paints the static board contents as Unicode glyphs.
+///   pieceSprite is a pre-rendered glyph image tagged with the offset from
+///   its top-left corner to the center of its visible ink, so it can be
+///   placed exactly in the middle of a square.
+/// </summary>
+type pieceSprite struct {
+	img *ebiten.Image
+	cx  float64
+	cy  float64
+}
+
+///
+/// <summary>
+///   spriteKey identifies a piece sprite by type and color.
+/// </summary>
+type spriteKey struct {
+	typ int8
+	col engine.Color
+}
+
+///
+/// <summary>
+///   spriteCache memoizes built piece sprites across frames.
+/// </summary>
+var spriteCache = map[spriteKey]*pieceSprite{}
+
+///
+/// <summary>
+///   getPieceSprite returns (building if needed) the centered glyph sprite
+///   for a piece type and color.
+/// </summary>
+/// <param name="typ">Piece type.</param>
+/// <param name="col">Piece color.</param>
+/// <returns>The cached sprite.</returns>
+func getPieceSprite(typ int8, col engine.Color) *pieceSprite {
+	key := spriteKey{typ, col}
+	if sp, ok := spriteCache[key]; ok {
+		return sp
+	}
+	sp := buildPieceSprite(typ, col)
+	spriteCache[key] = sp
+	return sp
+}
+
+///
+/// <summary>
+///   buildPieceSprite renders a glyph with an outline and locates the visible
+///   ink bounding box so the sprite centers its artwork, not its font metrics.
+/// </summary>
+/// <param name="typ">Piece type.</param>
+/// <param name="col">Piece color.</param>
+/// <returns>The built sprite.</returns>
+func buildPieceSprite(typ int8, col engine.Color) *pieceSprite {
+	str := string(glyphRune(typ, col))
+	b, _ := font.BoundString(pieceFace, str)
+	pad := 3
+	w := (b.Max.X - b.Min.X).Ceil() + 2*pad
+	h := (b.Max.Y - b.Min.Y).Ceil() + 2*pad
+	img := ebiten.NewImage(w, h)
+	img.Clear()
+	baseY := pad - b.Min.Y.Floor()
+	clr := colWhite
+	if col != engine.White {
+		clr = colBlack
+	}
+	for _, off := range [][2]int{{2, 0}, {-2, 0}, {0, 2}, {0, -2}} {
+		text.Draw(img, str, pieceFace, pad+off[0], baseY+off[1], colOutline)
+	}
+	text.Draw(img, str, pieceFace, pad, baseY, clr)
+
+	loX, loY := w, h
+	hiX, hiY := 0, 0
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			_, _, _, a := img.At(x, y).RGBA()
+			if a == 0 {
+				continue
+			}
+			if x < loX {
+				loX = x
+			}
+			if x > hiX {
+				hiX = x
+			}
+			if y < loY {
+				loY = y
+			}
+			if y > hiY {
+				hiY = y
+			}
+		}
+	}
+	return &pieceSprite{img: img, cx: float64(loX+hiX) / 2, cy: float64(loY+hiY) / 2}
+}
+
+///
+/// <summary>
+///   drawPieceAt draws a piece sprite centered at a given point.
+/// </summary>
+/// <param name="img">Destination image.</param>
+/// <param name="sp">Sprite to draw.</param>
+/// <param name="cx">Center x.</param>
+/// <param name="cy">Center y.</param>
+func drawPieceAt(img *ebiten.Image, sp *pieceSprite, cx, cy float64) {
+	opts := &ebiten.DrawImageOptions{}
+	opts.GeoM.Translate(cx-sp.cx, cy-sp.cy)
+	img.DrawImage(sp.img, opts)
+}
+
+///
+/// <summary>
+///   drawPieces paints the static board contents as centered glyph sprites.
 /// </summary>
 /// <param name="img">Destination image.</param>
 /// <param name="g">Game state.</param>
@@ -168,7 +278,7 @@ func drawPieces(img *ebiten.Image, g *Game) {
 			continue
 		}
 		fx, fy := squarePixel(sq)
-		drawGlyph(img, pieceFace, glyphRune(engine.TypeOf(p), engine.ColorOf(p)), float64(fx)+cellF/2, float64(fy)+cellF/2)
+		drawPieceAt(img, getPieceSprite(engine.TypeOf(p), engine.ColorOf(p)), float64(fx)+cellF/2, float64(fy)+cellF/2)
 	}
 }
 
@@ -193,7 +303,7 @@ func drawAnim(img *ebiten.Image, g *Game) {
 	x2, y2 := squarePixel(a.to)
 	cx := float64(x2-x1)*a.t + float64(x1) + cellF/2
 	cy := float64(y2-y1)*a.t + float64(y1) + cellF/2
-	drawGlyph(img, pieceFace, glyphRune(a.typ, a.col), cx, cy)
+	drawPieceAt(img, getPieceSprite(a.typ, a.col), cx, cy)
 }
 
 ///
@@ -220,10 +330,10 @@ func drawPromo(img *ebiten.Image, g *Game) {
 	for i, typ := range order {
 		sx := x0 + i*(cell+gap)
 		fillRect(img, sx, y0, cell, cell, colLight)
-		if (i)%2 == 0 {
+		if i%2 == 0 {
 			fillRect(img, sx, y0, cell, cell, colDark)
 		}
-		drawGlyph(img, pieceFace, glyphRune(typ, mover), float64(sx)+cellF/2, float64(y0)+cellF/2)
+		drawPieceAt(img, getPieceSprite(typ, mover), float64(sx)+cellF/2, float64(y0)+cellF/2)
 	}
 }
 
@@ -348,32 +458,6 @@ func glyphRune(typ int8, c engine.Color) rune {
 		return base + 5
 	}
 	return rune('?')
-}
-
-///
-/// <summary>
-///   drawGlyph paints a centered glyph with a soft outline for contrast.
-/// </summary>
-/// <param name="img">Destination image.</param>
-/// <param name="face">Font face.</param>
-/// <param name="r">Glyph rune.</param>
-/// <param name="cx">Center x.</param>
-/// <param name="cy">Center y.</param>
-func drawGlyph(img *ebiten.Image, face font.Face, r rune, cx, cy float64) {
-	str := string(r)
-	b, _ := font.BoundString(face, str)
-	w := (b.Max.X - b.Min.X).Ceil()
-	h := (b.Max.Y - b.Min.Y).Ceil()
-	x := int(cx) - w/2
-	y := int(cy) - h/2 - b.Min.Y.Floor()
-	clr := colWhite
-	if r > 0x2659 {
-		clr = colBlack
-	}
-	for _, off := range [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
-		text.Draw(img, str, face, x+off[0], y+off[1], colOutline)
-	}
-	text.Draw(img, str, face, x, y, clr)
 }
 
 ///
