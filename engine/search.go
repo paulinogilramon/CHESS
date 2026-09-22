@@ -153,56 +153,13 @@ var pstByType = [7][]int{
 ///
 /// <summary>
 ///   Evaluate scores a position from White's perspective in centipawns,
-///   using material, piece-square placement, the bishop pair and a small
-///   tempo bonus.
+///   blending the hand-crafted score with the installed neural evaluation
+///   when one is active.
 /// </summary>
 /// <param name="s">Position to evaluate.</param>
 /// <returns>The score from White's point of view.</returns>
 func Evaluate(s *State) int {
-	score := 0
-	phase := 0
-	for sq := 0; sq < 64; sq++ {
-		p := s.Board[sq]
-		if p == 0 {
-			continue
-		}
-		typ := TypeOf(p)
-		idx := sq
-		if p < 0 {
-			idx = sq ^ 56
-		}
-		val := pieceVal[typ]
-		switch typ {
-		case Knight, Bishop:
-			phase++
-		case Rook:
-			phase += 2
-		case Queen:
-			phase += 4
-		}
-		if typ == King {
-			val += (pstKing[idx]*phase + pstKingEnd[idx]*(24-phase)) / 24
-		} else {
-			val += pstByType[typ][idx]
-		}
-		if p > 0 {
-			score += val
-		} else {
-			score -= val
-		}
-	}
-	if hasBishopPair(s, White) {
-		score += 30
-	}
-	if hasBishopPair(s, Black) {
-		score -= 30
-	}
-	if s.Stm == White {
-		score += 15
-	} else {
-		score -= 15
-	}
-	return score
+	return evalWhite(s, DefaultNNConfig())
 }
 
 ///
@@ -224,27 +181,17 @@ func hasBishopPair(s *State, c Color) bool {
 
 ///
 /// <summary>
-///   evalStm evaluates from the side-to-move perspective for negamax use.
-/// </summary>
-/// <param name="s">Position to evaluate.</param>
-/// <returns>The score from the side to move's point of view.</returns>
-func evalStm(s *State) int {
-	if s.Stm == White {
-		return Evaluate(s)
-	}
-	return -Evaluate(s)
-}
-
-///
-/// <summary>
 ///   searchCtx carries the shared state of one search: node count, abort
-///   flag for the time budget, deadline, and the history heuristic table.
+///   flag for the time budget, deadline, history heuristic table, and the
+///   explicit neural evaluation config when provided.
 /// </summary>
 type searchCtx struct {
 	nodes    int
 	abort    bool
 	deadline time.Time
 	history  [64][64]int
+	nn       NNConfig
+	hasNN    bool
 }
 
 ///
@@ -377,7 +324,7 @@ func (sc *searchCtx) alphaBeta(s *State, depth, ply, alpha, beta int) int {
 /// <param name="beta">Upper window bound.</param>
 /// <returns>The quiet score from the side to move's perspective.</returns>
 func (sc *searchCtx) quiesce(s *State, alpha, beta int) int {
-	stand := evalStm(s)
+	stand := sc.evalPos(s)
 	if stand >= beta {
 		return beta
 	}
@@ -412,20 +359,35 @@ func (sc *searchCtx) quiesce(s *State, alpha, beta int) int {
 
 ///
 /// <summary>
-///   FindBestMove picks the strongest move in a position using iterative
-///   deepening with alpha-beta, returning the best move of the deepest
-///   completed iteration within the time budget.
+///   FindBestMove picks the strongest move in a position using the installed
+///   default evaluation (classical, or blended with a loaded neural net).
 /// </summary>
 /// <param name="s">Position to search.</param>
 /// <param name="maxDepth">Maximum search depth in plies.</param>
 /// <param name="ms">Time budget in milliseconds, or 0 for unlimited.</param>
 /// <returns>The chosen move, or the zero Move when there is no legal move.</returns>
 func FindBestMove(s *State, maxDepth int, ms int) Move {
+	return FindBestMoveWith(s, maxDepth, ms, DefaultNNConfig())
+}
+
+///
+/// <summary>
+///   FindBestMoveWith picks the strongest move in a position using iterative
+///   deepening with alpha-beta and an explicit evaluation configuration,
+///   returning the best move of the deepest completed iteration within the
+///   time budget.
+/// </summary>
+/// <param name="s">Position to search.</param>
+/// <param name="maxDepth">Maximum search depth in plies.</param>
+/// <param name="ms">Time budget in milliseconds, or 0 for unlimited.</param>
+/// <param name="cfg">Neural evaluation configuration for this search only.</param>
+/// <returns>The chosen move, or the zero Move when there is no legal move.</returns>
+func FindBestMoveWith(s *State, maxDepth int, ms int, cfg NNConfig) Move {
 	moves := GenerateLegal(s)
 	if len(moves) == 0 {
 		return 0
 	}
-	sc := &searchCtx{}
+	sc := &searchCtx{nn: cfg, hasNN: true}
 	if ms > 0 {
 		sc.deadline = time.Now().Add(time.Duration(ms) * time.Millisecond)
 	} else {
