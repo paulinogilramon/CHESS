@@ -3,3 +3,7 @@
 
 # regenerated self-play dataset
 dataset.bin
+
+# relabelled search datasets and experimental weights
+relabel*.bin
+w*.bin

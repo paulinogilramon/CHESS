@@ -95,6 +95,47 @@ func (d *DatasetWriter) Close() error {
 
 ///
 /// <summary>
+///   LoadRawDataset reads the raw binary dataset without feature encoding,
+///   preserving boards and the stored White-perspective targets.
+/// </summary>
+/// <param name="path">Binary dataset path.</param>
+/// <returns>The raw samples, or an error.</returns>
+func LoadRawDataset(path string) ([]RawSample, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	hdr := make([]byte, 8)
+	if _, err := io.ReadFull(f, hdr); err != nil {
+		return nil, err
+	}
+	if string(hdr) != string(datasetMagic[:]) {
+		return nil, errors.New("dataset: bad magic")
+	}
+	var count uint64
+	if err := binary.Read(f, binary.LittleEndian, &count); err != nil {
+		return nil, err
+	}
+	out := make([]RawSample, 0, count)
+	for i := uint64(0); i < count; i++ {
+		var raw RawSample
+		if err := binary.Read(f, binary.LittleEndian, &raw.Board); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &raw.Stm); err != nil {
+			return nil, err
+		}
+		if err := binary.Read(f, binary.LittleEndian, &raw.Target); err != nil {
+			return nil, err
+		}
+		out = append(out, raw)
+	}
+	return out, nil
+}
+
+///
+/// <summary>
 ///   SaveDataset writes raw samples to a binary file.
 /// </summary>
 /// <param name="path">Destination path.</param>

@@ -359,6 +359,47 @@ func (sc *searchCtx) quiesce(s *State, alpha, beta int) int {
 
 ///
 /// <summary>
+///   SearchValue returns the engine's evaluation of a position in centipawns
+///   from the side to move's perspective, using an unlimited classical
+///   alpha-beta search to the requested depth. It is used to produce labels
+///   for neural evaluation distillation.
+/// </summary>
+/// <param name="s">Position to value.</param>
+/// <param name="maxDepth">Search depth in plies.</param>
+/// <returns>The best achievable score for the side to move.</returns>
+func SearchValue(s *State, maxDepth int) int {
+	moves := GenerateLegal(s)
+	if len(moves) == 0 {
+		if IsInCheck(s, s.Stm) {
+			return -mateScore
+		}
+		return 0
+	}
+	if s.Halfmove >= 100 {
+		return 0
+	}
+	sc := &searchCtx{nn: NNConfig{}, hasNN: true}
+	sc.deadline = time.Now().Add(365 * 24 * time.Hour)
+	best := sc.evalPos(s)
+	alpha, beta := -infScore, infScore
+	for d := 1; d <= maxDepth; d++ {
+		sc.orderMoves(s, moves)
+		alpha, beta = -infScore, infScore
+		for _, m := range moves {
+			u := MakeMove(s, m)
+			val := -sc.alphaBeta(s, d-1, 1, -beta, -alpha)
+			UndoMove(s, m, u)
+			if val > alpha {
+				alpha = val
+			}
+		}
+		best = alpha
+	}
+	return best
+}
+
+///
+/// <summary>
 ///   FindBestMove picks the strongest move in a position using the installed
 ///   default evaluation (classical, or blended with a loaded neural net).
 /// </summary>

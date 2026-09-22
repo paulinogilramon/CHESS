@@ -54,8 +54,10 @@ type Net struct {
 
 ///
 /// <summary>
-///   NewNet builds a randomly initialised network using He initialisation so
-///   ReLU activations keep a stable scale during training.
+///   NewNet builds a randomly initialised network using carefully scaled
+///   initialisation so pre-activations stay well inside the linear region of
+///   the tanh output (outputs start near zero instead of saturating, which
+///   would starve the gradients).
 /// </summary>
 /// <param name="h1">First hidden layer width.</param>
 /// <param name="h2">Second hidden layer width.</param>
@@ -69,14 +71,19 @@ func NewNet(h1, h2 int, seed int64) *Net {
 	n.W2 = make([]float32, h1*h2)
 	n.B2 = make([]float32, h2)
 	n.W3 = make([]float32, h2)
+	// The sparse first layer sums ~O(2*sqrt(features)) columns; keep the
+	// sum of squared pre-activations around 0.4 so h1 stays order one.
+	w1std := 1.0 / 20
 	for i := range n.W1 {
-		n.W1[i] = float32(rng.NormFloat64() * math.Sqrt(2/32.0))
+		n.W1[i] = float32(rng.NormFloat64() * w1std)
 	}
+	w2std := 1.0 / 24
 	for i := range n.W2 {
-		n.W2[i] = float32(rng.NormFloat64() * math.Sqrt(2/float64(h1)))
+		n.W2[i] = float32(rng.NormFloat64() * w2std)
 	}
+	w3std := 0.1
 	for i := range n.W3 {
-		n.W3[i] = float32(rng.NormFloat64() * math.Sqrt(2/float64(h2)))
+		n.W3[i] = float32(rng.NormFloat64() * w3std)
 	}
 	return n
 }
