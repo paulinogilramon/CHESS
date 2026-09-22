@@ -1,2 +1,5 @@
 # built binaries
 *.exe
+
+# regenerated self-play dataset
+dataset.bin
