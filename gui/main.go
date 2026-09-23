@@ -433,7 +433,8 @@ func (g *Game) engineMove() {
 	g.status = "Engine thinking..."
 	g.aiCh = make(chan engine.Move, 1)
 	go func() {
-		g.aiCh <- engine.FindBestMove(g.board, 4, 1200)
+		clone := *g.board
+		g.aiCh <- engine.FindBestMove(&clone, 4, 1200)
 	}()
 }
 
