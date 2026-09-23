@@ -98,6 +98,7 @@ type animPiece struct {
 type Game struct {
 	board     *engine.State
 	history   []histMove
+	keys      []string
 	selected  int
 	dests     []engine.Move
 	movesHint bool
@@ -150,6 +151,8 @@ func (g *Game) Reset() {
 	}
 	g.board = engine.NewStart()
 	g.history = g.history[:0]
+	g.keys = g.keys[:0]
+	g.keys = append(g.keys, engine.PositionKey(g.board))
 	g.selected = -1
 	g.dests = nil
 	g.anim = nil
@@ -157,10 +160,6 @@ func (g *Game) Reset() {
 	g.resetLogs()
 }
 
-///
-/// <summary>
-///   Undo takes back the most recent move, if any.
-/// </summary>
 func (g *Game) Undo() {
 	if g.thinking {
 		g.status = "Wait for the engine."
@@ -173,6 +172,9 @@ func (g *Game) Undo() {
 	last := g.history[len(g.history)-1]
 	engine.UndoMove(g.board, last.m, last.u)
 	g.history = g.history[:len(g.history)-1]
+	if len(g.keys) > 0 { // pop the key pushed for the undone ply
+		g.keys = g.keys[:len(g.keys)-1]
+	}
 	g.selected = -1
 	g.dests = nil
 	g.anim = nil
@@ -338,6 +340,7 @@ func (g *Game) play(m engine.Move) {
 	san := engine.San(g.board, m)
 	u := engine.MakeMove(g.board, m)
 	g.history = append(g.history, histMove{m, u, san})
+	g.keys = append(g.keys, engine.PositionKey(g.board))
 	g.lastFrom, g.lastTo = m.From(), m.To()
 	mover := engine.ColorOf(g.board.PieceAt(m.To()))
 	g.anim = &animPiece{from: m.From(), to: m.To(), typ: engine.TypeOf(g.board.PieceAt(m.To())), col: mover}
@@ -347,7 +350,7 @@ func (g *Game) play(m engine.Move) {
 	if len(g.logs) > 12 {
 		g.logs = g.logs[1:]
 	}
-	g.status = statusText(g.board, san)
+	g.status = g.statusText(g.board, san)
 }
 
 ///
@@ -456,7 +459,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 /// <param name="s">Position to describe.</param>
 /// <param name="lastSan">SAN of the move just played.</param>
 /// <returns>The status line.</returns>
-func statusText(s *engine.State, lastSan string) string {
+func (g *Game) statusText(s *engine.State, lastSan string) string {
 	line := "Move " + lastSan + ". " + colorWord(s.Stm) + " to move."
 	if len(engine.GenerateLegal(s)) == 0 {
 		if engine.IsInCheck(s, s.Stm) {
@@ -467,7 +470,34 @@ func statusText(s *engine.State, lastSan string) string {
 	} else if engine.IsInCheck(s, s.Stm) {
 		line += " Check!"
 	}
+	if engine.FiftyMoveDraw(s) {
+		line = "Draw by the fifty-move rule."
+	} else if engine.InsufficientMaterial(s) {
+		line = "Draw by insufficient material."
+	} else if g.repetitions() >= 3 {
+		line = "Draw by threefold repetition."
+	}
+	if line == "" {
+		line = "Move " + lastSan + ". " + colorWord(s.Stm) + " to move."
+	}
 	return line
+}
+
+///
+/// <summary>
+///   repetitions counts how many times the current position appears in the
+///   game, which implements the threefold-repetition rule.
+/// </summary>
+/// <returns>The number of occurrences of the current position key.</returns>
+func (g *Game) repetitions() int {
+	n := 0
+	cur := engine.PositionKey(g.board)
+	for _, k := range g.keys {
+		if k == cur {
+			n++
+		}
+	}
+	return n
 }
 
 ///
