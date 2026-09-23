@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"chess/engine"
@@ -19,17 +20,33 @@ import (
 ///   the classical score at a 600-cp scale, matching the GUI client.
 /// </summary>
 func init() {
-	if _, err := os.Stat("weights.bin"); err != nil {
+	if _, err := os.Stat(weightsPath()); err != nil {
 		fmt.Println("neural weights not found; using classical evaluation")
 		return
 	}
-	net, err := engine.LoadNN("weights.bin", 0.6, 600)
+	net, err := engine.LoadNN(weightsPath(), 0.6, 600)
 	if err != nil {
 		fmt.Println("neural weights load failed:", err)
 		return
 	}
 	engine.SetDefaultNN(engine.NNConfig{Net: net, Blend: 0.6, Scale: 600})
 	fmt.Println("neural evaluation loaded")
+}
+
+///
+/// <summary>
+///   weightsPath resolves weights.bin next to the executable, falling back to
+///   the working directory so the game works regardless of where it is run.
+/// </summary>
+/// <returns>The resolved weights file path.</returns>
+func weightsPath() string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "weights.bin")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "weights.bin"
 }
 
 ///

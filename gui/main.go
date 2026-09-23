@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"chess/engine"
 
@@ -23,17 +24,33 @@ import (
 ///   evaluation when the file exists and falls back to classical otherwise.
 /// </summary>
 func init() {
-	if _, err := os.Stat("weights.bin"); err != nil {
+	if _, err := os.Stat(weightsPath()); err != nil {
 		log.Println("neural weights not found; using classical evaluation")
 		return
 	}
-	net, err := engine.LoadNN("weights.bin", 0.6, 600)
+	net, err := engine.LoadNN(weightsPath(), 0.6, 600)
 	if err != nil {
 		log.Println("neural weights load failed:", err)
 		return
 	}
 	engine.SetDefaultNN(engine.NNConfig{Net: net, Blend: 0.6, Scale: 600})
 	log.Println("neural evaluation loaded")
+}
+
+///
+/// <summary>
+///   weightsPath resolves weights.bin next to the executable, falling back to
+///   the working directory so the game works regardless of where it is run.
+/// </summary>
+/// <returns>The resolved weights file path.</returns>
+func weightsPath() string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), "weights.bin")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return "weights.bin"
 }
 
 ///
@@ -107,6 +124,7 @@ func newGame() *Game {
 		selected: -1,
 		lastFrom: -1,
 		lastTo:   -1,
+		aiSide:   engine.Black,
 	}
 	g.resetLogs()
 	return g
@@ -118,7 +136,7 @@ func newGame() *Game {
 /// </summary>
 func (g *Game) resetLogs() {
 	g.logs = g.logs[:0]
-	g.status = "New game. Left-click a piece to see its moves."
+	g.status = "New game. You are White; the engine plays Black."
 }
 
 ///
