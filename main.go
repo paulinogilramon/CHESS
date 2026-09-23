@@ -14,6 +14,26 @@ import (
 
 ///
 /// <summary>
+///   init loads the trained neural evaluator from weights.bin when present and
+///   installs it as the default engine evaluation, blending 60% neural with
+///   the classical score at a 600-cp scale, matching the GUI client.
+/// </summary>
+func init() {
+	if _, err := os.Stat("weights.bin"); err != nil {
+		fmt.Println("neural weights not found; using classical evaluation")
+		return
+	}
+	net, err := engine.LoadNN("weights.bin", 0.6, 600)
+	if err != nil {
+		fmt.Println("neural weights load failed:", err)
+		return
+	}
+	engine.SetDefaultNN(engine.NNConfig{Net: net, Blend: 0.6, Scale: 600})
+	fmt.Println("neural evaluation loaded")
+}
+
+///
+/// <summary>
 ///   movesPlayed records a move together with the undo info needed to
 ///   reverse it, forming the position history stack.
 /// </summary>
@@ -87,12 +107,7 @@ func main() {
 		case "hist", "history":
 			printHistory(history)
 		case "go":
-			best := engine.GenerateLegal(s)
-			if len(best) == 0 {
-				fmt.Println("No legal moves.")
-				break
-			}
-			m := best[0]
+			m := engine.FindBestMove(s, 4, 1500)
 			san := engine.San(s, m)
 			u := engine.MakeMove(s, m)
 			history = append(history, movesPlayed{m, u, san})
@@ -131,6 +146,7 @@ Commands:
   moves               list all legal moves (SAN)
   hist                list moves already played
   undo                take back the last move
+  go                  engine plays its best move
   fen [fenstring]     print FEN, or with an argument set the position
   e4 / Nf3 / O-O / e2e4q
                       play a move in SAN or coordinate notation

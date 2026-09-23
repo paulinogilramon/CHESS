@@ -7,12 +7,34 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
 
 	"chess/engine"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 )
+
+///
+/// <summary>
+///   init loads the trained neural evaluator from weights.bin when present and
+///   installs it as the default engine evaluation, blending 60% neural with
+///   the classical score at a 600-cp scale. The GUI plays with the learned
+///   evaluation when the file exists and falls back to classical otherwise.
+/// </summary>
+func init() {
+	if _, err := os.Stat("weights.bin"); err != nil {
+		log.Println("neural weights not found; using classical evaluation")
+		return
+	}
+	net, err := engine.LoadNN("weights.bin", 0.6, 600)
+	if err != nil {
+		log.Println("neural weights load failed:", err)
+		return
+	}
+	engine.SetDefaultNN(engine.NNConfig{Net: net, Blend: 0.6, Scale: 600})
+	log.Println("neural evaluation loaded")
+}
 
 ///
 /// <summary>
