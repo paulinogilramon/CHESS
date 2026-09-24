@@ -3,6 +3,8 @@ package nn
 import (
 	"math"
 	"math/rand"
+	"runtime"
+	"sync"
 )
 
 ///
@@ -29,13 +31,14 @@ type Sample struct {
 /// <param name="Eps">Adam numerical stabiliser.</param>
 /// <param name="Seed">Seed for the shuffle generator.</param>
 type TrainConfig struct {
-	Epochs int
-	Batch  int
-	LR     float32
-	Beta1  float32
-	Beta2  float32
-	Eps    float32
-	Seed   int64
+	Epochs  int
+	Batch   int
+	LR      float32
+	Beta1   float32
+	Beta2   float32
+	Eps     float32
+	Seed    int64
+	Workers int
 }
 
 ///
@@ -78,6 +81,25 @@ type fwd struct {
 /// <returns>Cached activations.</returns>
 func forwardTrain(n *Net, feats []uint16) *fwd {
 	f := &fwd{h1pre: make([]float32, n.H1), h1: make([]float32, n.H1), h2pre: make([]float32, n.H2), h2: make([]float32, n.H2)}
+	forwardInto(n, feats, f)
+	return f
+}
+
+///
+/// <summary>
+///   forwardInto runs a forward pass into a caller-provided scratch buffer so
+///   the training loop can reuse allocations across the whole minibatch.
+/// </summary>
+/// <param name="n">Network being trained.</param>
+/// <param name="feats">Sparse input features.</param>
+/// <param name="f">Scratch to fill (must have matching sizes).</param>
+func forwardInto(n *Net, feats []uint16, f *fwd) {
+	for i := range f.h1pre {
+		f.h1pre[i] = 0
+	}
+	for i := range f.h2pre {
+		f.h2pre[i] = 0
+	}
 	for _, ftr := range feats {
 		base := int(ftr) * n.H1
 		for i := 0; i < n.H1; i++ {
@@ -106,7 +128,6 @@ func forwardTrain(n *Net, feats []uint16) *fwd {
 		z += f.h2[j] * n.W3[j]
 	}
 	f.out = float32(math.Tanh(float64(z)))
-	return f
 }
 
 ///
@@ -186,6 +207,20 @@ func (g *gradSet) zero() {
 /// <param name="f">Cached forward activations.</param>
 /// <param name="g">Gradient accumulator to update.</param>
 func backward(n *Net, s Sample, f *fwd, g *gradSet) {
+	backwardScratch(n, s, f, g, make([]float64, n.H1))
+}
+
+///
+/// <summary>
+///   backwardScratch is the shared gradient backprop with a reusable error
+///   buffer so the training loop avoids per-sample allocation.
+/// </summary>
+/// <param name="n">Network whose activations were cached.</param>
+/// <param name="s">Sample with the supervisory target.</param>
+/// <param name="f">Cached forward activations.</param>
+/// <param name="g">Gradient accumulator to update.</param>
+/// <param name="e1">Worker-local error buffer of length H1.</param>
+func backwardScratch(n *Net, s Sample, f *fwd, g *gradSet, e1 []float64) {
 	dOut := float64(f.out) - float64(s.Target)
 	dZ := dOut * (1 - float64(f.out)*float64(f.out))
 
@@ -205,7 +240,9 @@ func backward(n *Net, s Sample, f *fwd, g *gradSet) {
 		}
 	}
 
-	e1 := make([]float64, n.H1)
+	for i := 0; i < n.H1; i++ {
+		e1[i] = 0
+	}
 	for i := 0; i < n.H1; i++ {
 		if f.h1[i] <= 0 {
 			continue
@@ -291,6 +328,7 @@ func Train(n *Net, samples []Sample, val []Sample, cfg TrainConfig, progress fun
 	rng := newRand(cfg.Seed)
 	g := newGradSet(n)
 	a := newAdam(n)
+	workers := trainWorkers(cfg, len(samples))
 	epochLoss := make([]float32, cfg.Epochs)
 	for epoch := 0; epoch < cfg.Epochs; epoch++ {
 		shuffle(samples, rng)
@@ -301,31 +339,117 @@ func Train(n *Net, samples []Sample, val []Sample, cfg TrainConfig, progress fun
 			if end > len(samples) {
 				end = len(samples)
 			}
+
 			g.zero()
+			w := workers
+			if w > end-start {
+				w = end - start
+			}
+			if w < 1 {
+				w = 1
+			}
+			grads := make([]*gradSet, w)
+			losses := make([]float64, w)
+			var wg sync.WaitGroup
+			step := (end - start + w - 1) / w
+			for i := 0; i < w; i++ {
+				lo := start + i*step
+				hi := lo + step
+				if hi > end {
+					hi = end
+				}
+				if lo >= hi {
+					continue
+				}
+				gs := newGradSet(n)
+				grads[i] = gs
+				wg.Add(1)
+				go func(idx int, part []Sample) {
+					defer wg.Done()
+					scratch := &fwd{h1pre: make([]float32, n.H1), h1: make([]float32, n.H1), h2pre: make([]float32, n.H2), h2: make([]float32, n.H2)}
+					e1 := make([]float64, n.H1)
+					l := float64(0)
+					for _, s := range part {
+						forwardInto(n, s.Feats, scratch)
+						d := scratch.out - s.Target
+						l += float64(d * d)
+						backwardScratch(n, s, scratch, gs, e1)
+					}
+					losses[idx] = l
+				}(i, samples[lo:hi])
+			}
+			wg.Wait()
+
 			batchLoss := float64(0)
-			for k := start; k < end; k++ {
-				s := samples[k]
-				f := forwardTrain(n, s.Feats)
-				diff := f.out - s.Target
-				batchLoss += float64(diff * diff)
-				backward(n, s, f, g)
+			for i := 0; i < w; i++ {
+				batchLoss += losses[i]
+				if grads[i] != nil {
+					g.add(grads[i])
+				}
 			}
 			a.t++
-			applyAdam(n.W1, 0, a, g.gW1, end-start, cfg)
-			applyAdam(n.B1, len(n.W1), a, g.gB1, end-start, cfg)
-			applyAdam(n.W2, len(n.W1)+len(n.B1), a, g.gW2, end-start, cfg)
-			applyAdam(n.B2, len(n.W1)+len(n.B1)+len(n.W2), a, g.gB2, end-start, cfg)
-			applyAdam(n.W3, len(n.W1)+len(n.B1)+len(n.W2)+len(n.B2), a, g.gW3, end-start, cfg)
+			applied := end - start
+			applyAdam(n.W1, 0, a, g.gW1, applied, cfg)
+			applyAdam(n.B1, len(n.W1), a, g.gB1, applied, cfg)
+			applyAdam(n.W2, len(n.W1)+len(n.B1), a, g.gW2, applied, cfg)
+			applyAdam(n.B2, len(n.W1)+len(n.B1)+len(n.W2), a, g.gB2, applied, cfg)
+			applyAdam(n.W3, len(n.W1)+len(n.B1)+len(n.W2)+len(n.B2), a, g.gW3, applied, cfg)
 
 			total += batchLoss
-			count += end - start
+			count += applied
 			if progress != nil {
-				progress(epoch, start/cfg.Batch, float32(batchLoss/float64(end-start)))
+				progress(epoch, start/cfg.Batch, float32(batchLoss/float64(applied)))
 			}
 		}
 		epochLoss[epoch] = float32(total / float64(count))
 	}
 	return epochLoss
+}
+
+///
+/// <summary>
+///   trainWorkers picks a positive worker count: the configured value when
+///   set, otherwise one per available core, bounded by the sample count.
+/// </summary>
+/// <param name="cfg">Training configuration.</param>
+/// <param name="samples">Number of training samples.</param>
+/// <returns>The number of parallel gradient workers.</returns>
+func trainWorkers(cfg TrainConfig, samples int) int {
+	w := cfg.Workers
+	if w <= 0 {
+		w = runtime.NumCPU()
+	}
+	if w > samples {
+		w = samples
+	}
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+///
+/// <summary>
+///   add accumulates another gradient set into this one.
+/// </summary>
+/// <param name="o">Gradients to add.</param>
+func (g *gradSet) add(o *gradSet) {
+	for i := range g.gW1 {
+		g.gW1[i] += o.gW1[i]
+	}
+	for i := range g.gB1 {
+		g.gB1[i] += o.gB1[i]
+	}
+	for i := range g.gW2 {
+		g.gW2[i] += o.gW2[i]
+	}
+	for i := range g.gB2 {
+		g.gB2[i] += o.gB2[i]
+	}
+	for i := range g.gW3 {
+		g.gW3[i] += o.gW3[i]
+	}
+	g.gB3 += o.gB3
 }
 
 ///
@@ -339,11 +463,38 @@ func ValLoss(n *Net, samples []Sample) float32 {
 	if len(samples) == 0 {
 		return 0
 	}
+	workers := runtime.NumCPU()
+	if workers > len(samples) {
+		workers = len(samples)
+	}
+	parts := make([]float64, workers)
+	var wg sync.WaitGroup
+	step := (len(samples) + workers - 1) / workers
+	for i := 0; i < workers; i++ {
+		lo := i * step
+		hi := lo + step
+		if hi > len(samples) {
+			hi = len(samples)
+		}
+		if lo >= hi {
+			continue
+		}
+		wg.Add(1)
+		go func(idx int, part []Sample) {
+			defer wg.Done()
+			total := float64(0)
+			for _, s := range part {
+				v := n.Predict(s.Feats)
+				d := float64(v - s.Target)
+				total += d * d
+			}
+			parts[idx] = total
+		}(i, samples[lo:hi])
+	}
+	wg.Wait()
 	total := float64(0)
-	for _, s := range samples {
-		v := n.Predict(s.Feats)
-		diff := float64(v - s.Target)
-		total += diff * diff
+	for _, p := range parts {
+		total += p
 	}
 	return float32(total / float64(len(samples)))
 }

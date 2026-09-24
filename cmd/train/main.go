@@ -27,6 +27,7 @@ type options struct {
 	h2      int
 	valFrac float64
 	seed    int64
+	workers int
 }
 
 ///
@@ -46,6 +47,7 @@ func parseOptions() options {
 	flag.IntVar(&o.h2, "h2", 32, "second hidden layer width")
 	flag.Float64Var(&o.valFrac, "val", 0.05, "fraction of samples held out for validation")
 	flag.Int64Var(&o.seed, "seed", 42, "shuffle seed")
+	flag.IntVar(&o.workers, "workers", 0, "parallel gradient workers (0 = all cores)")
 	flag.Parse()
 	return o
 }
@@ -107,6 +109,7 @@ func main() {
 	cfg.Batch = o.batch
 	cfg.LR = float32(o.lr)
 	cfg.Seed = o.seed
+	cfg.Workers = o.workers
 
 	step := 0
 	losses := nn.Train(net, train, val, cfg, func(epoch, s int, loss float32) {
