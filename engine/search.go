@@ -295,7 +295,7 @@ func (sc *searchCtx) alphaBeta(s *State, depth, ply, alpha, beta int) int {
 	best := -infScore
 	for _, m := range moves {
 		u := MakeMove(s, m)
-		val := -sc.alphaBeta(s, depth-1, ply+1, -beta, -alpha)
+		val := -sc.alphaBeta(s, depth-1, ply+1, -beta, -alpha) + sc.moveBonus(m)
 		UndoMove(s, m, u)
 		if sc.abort {
 			return 0
@@ -339,7 +339,7 @@ func (sc *searchCtx) quiesce(s *State, alpha, beta int) int {
 			continue
 		}
 		u := MakeMove(s, m)
-		val := -sc.quiesce(s, -beta, -alpha)
+		val := -sc.quiesce(s, -beta, -alpha) + sc.moveBonus(m)
 		UndoMove(s, m, u)
 		if sc.abort {
 			return 0
@@ -387,7 +387,7 @@ func SearchValue(s *State, maxDepth int) int {
 		alpha, beta = -infScore, infScore
 		for _, m := range moves {
 			u := MakeMove(s, m)
-			val := -sc.alphaBeta(s, d-1, 1, -beta, -alpha)
+			val := -sc.alphaBeta(s, d-1, 1, -beta, -alpha) + sc.moveBonus(m)
 			UndoMove(s, m, u)
 			if val > alpha {
 				alpha = val
@@ -449,7 +449,7 @@ func FindBestMoveWith(s *State, maxDepth int, ms int, cfg NNConfig) Move {
 		curBest := perm[0]
 		for _, m := range perm {
 			u := MakeMove(s, m)
-			val := -sc.alphaBeta(s, d-1, 1, -beta, -alpha)
+			val := -sc.alphaBeta(s, d-1, 1, -beta, -alpha) + sc.moveBonus(m)
 			UndoMove(s, m, u)
 			if sc.abort {
 				return best

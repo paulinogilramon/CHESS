@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"chess/engine"
 
@@ -18,23 +19,72 @@ import (
 
 ///
 /// <summary>
-///   init loads the trained neural evaluator from weights.bin when present and
-///   installs it as the default engine evaluation, blending 60% neural with
-///   the classical score at a 600-cp scale. The GUI plays with the learned
-///   evaluation when the file exists and falls back to classical otherwise.
+///   autoMode enables autonomous AI vs AI play; the recent weights play White
+///   and the previous weights play Black so the matchup is visible.
+/// </summary>
+var (
+	autoMode  bool
+	whiteCfg  engine.NNConfig
+	blackCfg  engine.NNConfig
+	whiteName string
+	blackName string
+)
+
+///
+/// <summary>
+///   init resolves the game mode. When the executable is named gui_ia_ia (or
+///   CHESS_AUTOPLAY is set) both sides are engines: weights.bin (White) vs
+///   weights_old.bin (Black). Otherwise the classic setup is preserved and
+///   the loaded net is installed as the default engine evaluation.
 /// </summary>
 func init() {
-	if _, err := os.Stat(weightsPath()); err != nil {
-		log.Println("neural weights not found; using classical evaluation")
-		return
+	autoMode = isAutoExe()
+
+	wPath := engineEnvOr("CHESS_WHITE_WEIGHTS", weightsPath())
+	bPath := engineEnvOr("CHESS_BLACK_WEIGHTS", wPath)
+	if autoMode {
+		if p := assetOrCwd("weights_old.bin"); fileExists(p) {
+			bPath = engineEnvOr("CHESS_BLACK_WEIGHTS", p)
+		}
 	}
-	net, err := engine.LoadNN(weightsPath(), 0.6, 600)
-	if err != nil {
-		log.Println("neural weights load failed:", err)
-		return
+	whiteName = baseName(wPath)
+	blackName = baseName(bPath)
+
+	loadCfg := func(path string) engine.NNConfig {
+		if _, err := os.Stat(path); err != nil {
+			log.Println("neural weights not found:", path)
+			return engine.NNConfig{}
+		}
+		net, err := engine.LoadNN(path, 0.6, 600)
+		if err != nil {
+			log.Println("neural weights load failed:", path, err)
+			return engine.NNConfig{}
+		}
+		return engine.NNConfig{Net: net, Blend: 0.6, Scale: 600}
 	}
-	engine.SetDefaultNN(engine.NNConfig{Net: net, Blend: 0.6, Scale: 600})
-	log.Println("neural evaluation loaded")
+	whiteCfg = loadCfg(wPath)
+	blackCfg = loadCfg(bPath)
+	if !autoMode && blackCfg.Net != nil {
+		engine.SetDefaultNN(blackCfg)
+		log.Println("neural evaluation loaded")
+	}
+}
+
+///
+/// <summary>
+///   isAutoExe detects whether this build should run the AI vs AI showcase.
+/// </summary>
+/// <returns>True when launched as gui_ia_ia or CHESS_AUTOPLAY is set.</returns>
+func isAutoExe() bool {
+	if os.Getenv("CHESS_AUTOPLAY") != "" {
+		return true
+	}
+	if exe, err := os.Executable(); err == nil {
+		if strings.Contains(strings.ToLower(filepath.Base(exe)), "ia_ia") {
+			return true
+		}
+	}
+	return false
 }
 
 ///
@@ -51,6 +101,58 @@ func weightsPath() string {
 		}
 	}
 	return "weights.bin"
+}
+
+///
+/// <summary>
+///   engineEnvOr returns the environment value when set, otherwise the default.
+/// </summary>
+/// <param name="key">Environment variable name.</param>
+/// <param name="def">Fallback value.</param>
+/// <returns>The environment value or the fallback.</returns>
+func engineEnvOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+///
+/// <summary>
+///   assetOrCwd resolves a file next to the executable, falling back to the
+///   working directory so builds run regardless of launch folder.
+/// </summary>
+/// <param name="name">File name to resolve.</param>
+/// <returns>The resolved path.</returns>
+func assetOrCwd(name string) string {
+	if exe, err := os.Executable(); err == nil {
+		p := filepath.Join(filepath.Dir(exe), name)
+		if fileExists(p) {
+			return p
+		}
+	}
+	return name
+}
+
+///
+/// <summary>
+///   fileExists reports whether a path exists.
+/// </summary>
+/// <param name="p">Path to check.</param>
+/// <returns>True when the path exists.</returns>
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
+}
+
+///
+/// <summary>
+///   baseName trims the file name for display in the UI.
+/// </summary>
+/// <param name="p">Full path.</param>
+/// <returns>The base file name.</returns>
+func baseName(p string) string {
+	return filepath.Base(p)
 }
 
 ///
@@ -110,6 +212,7 @@ type Game struct {
 	status    string
 	logs      []string
 	aiSide    engine.Color
+	auto      bool
 	thinking  bool
 	aiCh      chan engine.Move
 }
@@ -126,6 +229,7 @@ func newGame() *Game {
 		lastFrom: -1,
 		lastTo:   -1,
 		aiSide:   engine.Black,
+		auto:     autoMode,
 	}
 	g.resetLogs()
 	return g
@@ -136,6 +240,10 @@ func newGame() *Game {
 ///   resetLogs clears the transient status and log lines shown in the UI.
 /// </summary>
 func (g *Game) resetLogs() {
+	if g.auto {
+		g.status = fmt.Sprintf("AI vs AI: %s (White) vs %s (Black).", whiteName, blackName)
+		return
+	}
 	g.logs = g.logs[:0]
 	g.status = "New game. You are White; the engine plays Black."
 }
@@ -420,25 +528,58 @@ func (g *Game) lastPromoTarget() int {
 ///
 /// <summary>
 ///   engineMove fires an asynchronous search when it is the engine side's
-///   turn, and is a no-op otherwise.
+///   turn, and is a no-op otherwise. In auto mode both sides are engines,
+///   each with its own weights.
 /// </summary>
 func (g *Game) engineMove() {
-	if g.aiSide == 0 || g.thinking {
+	if g.thinking {
 		return
 	}
-	if g.anim != nil || g.board.Stm != g.aiSide {
+	if g.anim != nil {
 		return
 	}
 	if len(engine.GenerateLegal(g.board)) == 0 {
 		return
 	}
+	if !g.auto {
+		if g.aiSide == 0 || g.board.Stm != g.aiSide {
+			return
+		}
+	}
+	if g.auto && g.autoEnded() {
+		g.status = "Match over by draw rule."
+		return
+	}
 	g.thinking = true
-	g.status = "Engine thinking..."
+	g.status = "Thinking..."
 	g.aiCh = make(chan engine.Move, 1)
 	go func() {
 		clone := *g.board
-		g.aiCh <- engine.FindBestMove(&clone, 4, 1200)
+		var cfg engine.NNConfig
+		if g.auto {
+			if clone.Stm == engine.White {
+				cfg = whiteCfg
+			} else {
+				cfg = blackCfg
+			}
+		} else {
+			cfg = engine.DefaultNNConfig()
+		}
+		g.aiCh <- engine.FindBestMoveWith(&clone, 4, 1200, cfg)
 	}()
+}
+
+///
+/// <summary>
+///   autoEnded reports whether the automatic match reached a terminal state
+///   (draw rules or checkmate) so the engines stop playing.
+/// </summary>
+/// <returns>True when the position is over.</returns>
+func (g *Game) autoEnded() bool {
+	if engine.FiftyMoveDraw(g.board) || engine.InsufficientMaterial(g.board) || g.repetitions() >= 3 {
+		return true
+	}
+	return false
 }
 
 ///
@@ -546,7 +687,11 @@ func (g *Game) sortedLogs() string {
 func main() {
 	g := newGame()
 	ebiten.SetWindowSize(screenW, screenH)
-	ebiten.SetWindowTitle("Chess")
+	if g.auto {
+		ebiten.SetWindowTitle("Chess - AI vs AI")
+	} else {
+		ebiten.SetWindowTitle("Chess")
+	}
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)

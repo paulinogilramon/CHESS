@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"os"
 	"sync"
@@ -16,6 +17,14 @@ import (
 
 	"chess/engine"
 	"chess/nn"
+)
+
+const (
+	// ptsNorm scales the remaining-points target into (-1,1) for the tanh
+	// output of the value network.
+	ptsNorm = 800.0
+	// ptsWin is the terminal points grant for a full win from White's view.
+	ptsWin = 1200.0
 )
 
 ///
@@ -33,6 +42,8 @@ type options struct {
 	noise   float64
 	novelty float64
 	pos     int64
+	points  bool
+	target  string
 	seed    int64
 }
 
@@ -53,6 +64,8 @@ func parseOptions() options {
 	flag.Float64Var(&o.noise, "noise", 0.2, "probability of playing a random opening move")
 	flag.Float64Var(&o.novelty, "novelty", 1.0, "probability of playing the least-visited legal move")
 	flag.Int64Var(&o.pos, "pos", 0, "minimum positions to emit before stopping (0 = use games)")
+	flag.BoolVar(&o.points, "points", false, "enable the points system during self-play")
+	flag.StringVar(&o.target, "target", "result", "training labels: result or points")
 	flag.Int64Var(&o.seed, "seed", 1, "worker seed offset")
 	flag.Parse()
 	return o
@@ -101,6 +114,7 @@ type seenPos struct {
 	counts map[[67]byte]int
 }
 
+///
 ///
 /// <summary>
 ///   newSeenPos returns an empty shared position counter.
@@ -186,6 +200,7 @@ func playGame(rng *rand.Rand, o options, global *seenPos) ([]nn.RawSample, float
 
 	seen := map[[67]byte]int{}
 	var out []nn.RawSample
+	var ev []float32
 	result := float32(0)
 	discard := false
 	for ply := 0; ply < o.maxPly; ply++ {
@@ -219,6 +234,7 @@ func playGame(rng *rand.Rand, o options, global *seenPos) ([]nn.RawSample, float
 		} else if ply < 24 && rng.Float64() < o.noise && len(moves) > 0 {
 			m = moves[rng.Intn(len(moves))]
 		}
+		ev = append(ev, float32(engine.MoveReward(s, m)))
 		engine.MakeMove(s, m)
 		if ply == o.maxPly-1 {
 			discard = true
@@ -229,19 +245,51 @@ func playGame(rng *rand.Rand, o options, global *seenPos) ([]nn.RawSample, float
 	if discard {
 		return nil, 0, true
 	}
+	if o.target == "points" {
+		acc := float32(0)
+		switch {
+		case result > 0:
+			acc = ptsWin
+		case result < 0:
+			acc = -ptsWin
+		}
+		for i := len(out) - 1; i >= 0; i-- {
+			acc += ev[i]
+			out[i].Target = tanhNorm(acc)
+		}
+	}
 	if !o.mirror {
-		for i := range out {
-			out[i].Target = result
+		if o.target != "points" {
+			for i := range out {
+				out[i].Target = result
+			}
 		}
 		return out, result, false
 	}
 	twice := make([]nn.RawSample, 0, len(out)*2)
 	for _, r := range out {
-		r.Target = result
+		if o.target != "points" {
+			r.Target = result
+		}
 		twice = append(twice, r)
-		twice = append(twice, nn.RawSample{Board: mirrorBoard(r.Board), Stm: -r.Stm, Target: result})
+		mirrorTarget := result
+		if o.target == "points" {
+			mirrorTarget = -r.Target
+		}
+		twice = append(twice, nn.RawSample{Board: mirrorBoard(r.Board), Stm: -r.Stm, Target: mirrorTarget})
 	}
 	return twice, result, false
+}
+
+///
+/// <summary>
+///   tanhNorm scales a remaining-points raw total into the (-1,1) output
+///   range of the value network.
+/// </summary>
+/// <param name="pts">Raw remaining points from White's perspective.</param>
+/// <returns>The normalized target in (-1,1).</returns>
+func tanhNorm(pts float32) float32 {
+	return float32(math.Tanh(float64(pts) / ptsNorm))
 }
 
 ///
@@ -304,6 +352,10 @@ func main() {
 	o := parseOptions()
 	if o.games <= 0 || o.cores <= 0 {
 		log.Fatal("games and cores must be positive")
+	}
+	if o.points || o.target == "points" {
+		engine.EnablePoints(true)
+		log.Printf("points system on (target=%s)", o.target)
 	}
 
 	out := make(chan []nn.RawSample, o.cores*2)

@@ -142,7 +142,7 @@ func classicalScore(s *State) int {
 func evalWhite(s *State, cfg NNConfig) int {
 	cl := classicalScore(s)
 	if cfg.Net == nil {
-		return cl
+		return pointsEval(s, cl)
 	}
 	v := cfg.Net.Evaluate(s.Board, int8(s.Stm))
 	if s.Stm == Black {
@@ -150,7 +150,7 @@ func evalWhite(s *State, cfg NNConfig) int {
 	}
 	nnCp := float64(cfg.Scale) * float64(v)
 	blend := float64(cfg.Blend)
-	return int(math.Round(float64(cl)*(1-blend) + blend*nnCp))
+	return pointsEval(s, int(math.Round(float64(cl)*(1-blend)+blend*nnCp)))
 }
 
 ///

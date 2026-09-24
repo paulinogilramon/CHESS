@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"chess/engine"
 	"chess/nn"
@@ -21,16 +23,21 @@ import (
 ///   Options gathered from the command line.
 /// </summary>
 type options struct {
-	weights string
-	blend   float64
-	scale   float64
-	games   int
-	moveMs  int
-	depth   int
-	openMax int
-	maxPly  int
-	cores   int
-	seed    int64
+	weights  string
+	weights2 string
+	blend    float64
+	scale    float64
+	games    int
+	moveMs   int
+	depth    int
+	openMax  int
+	maxPly   int
+	cores    int
+	seed     int64
+	san      bool
+	points   bool
+	labelA   string
+	labelB   string
 }
 
 ///
@@ -41,6 +48,7 @@ type options struct {
 func parseOptions() options {
 	var o options
 	flag.StringVar(&o.weights, "weights", "weights.bin", "trained network weights")
+	flag.StringVar(&o.weights2, "weights2", "", "second weights file; when set plays these against -weights head to head")
 	flag.Float64Var(&o.blend, "blend", 0.6, "network blend for the neural side")
 	flag.Float64Var(&o.scale, "scale", 300, "centipawns per unit of network value")
 	flag.IntVar(&o.games, "games", 40, "number of paired games (2 per pairing)")
@@ -50,6 +58,8 @@ func parseOptions() options {
 	flag.IntVar(&o.maxPly, "maxply", 240, "game length cap (counted as a draw)")
 	flag.IntVar(&o.cores, "cores", 4, "parallel worker goroutines")
 	flag.Int64Var(&o.seed, "seed", 7, "opening seed")
+	flag.BoolVar(&o.san, "san", false, "print each move live (use cores=1, games=1)")
+	flag.BoolVar(&o.points, "points", false, "enable the move/capture/promotion/check points system")
 	flag.Parse()
 	return o
 }
@@ -107,14 +117,28 @@ func playOne(opening []engine.Move, cfgWhite, cfgBlack engine.NNConfig, o option
 	seen := map[[67]byte]int{}
 	for ply := 0; ply < o.maxPly; ply++ {
 		if s.Halfmove >= 100 {
+			if o.san {
+				fmt.Println("  (50-move rule)")
+			}
 			return false
 		}
 		moves := engine.GenerateLegal(s)
 		if len(moves) == 0 {
-			return engine.IsInCheck(s, s.Stm) && s.Stm == engine.Black
+			mated := engine.IsInCheck(s, s.Stm) && s.Stm == engine.Black
+			if o.san {
+				if engine.IsInCheck(s, s.Stm) {
+					fmt.Println("  #")   
+				} else {
+					fmt.Println("  (stalemate)")
+				}
+			}
+			return mated
 		}
 		k := key(s)
 		if seen[k] >= 3 {
+			if o.san {
+				fmt.Println("  (repetition)")
+			}
 			return false
 		}
 		seen[k]++
@@ -125,7 +149,21 @@ func playOne(opening []engine.Move, cfgWhite, cfgBlack engine.NNConfig, o option
 			cfg = boards[1]
 		}
 		m := engine.FindBestMoveWith(s, o.depth, o.moveMs, cfg)
+		san := engine.San(s, m)
+		mover := s.Stm
+		fullmove := s.Fullmove
 		engine.MakeMove(s, m)
+		if o.san {
+			if mover == engine.White {
+				fmt.Printf("%d. %s  ", fullmove, san)
+			} else {
+				fmt.Printf("%d... %s\n", fullmove, san)
+			}
+			time.Sleep(70 * time.Millisecond)
+		}
+	}
+	if o.san {
+		fmt.Println("  (chart cap, draw)")
 	}
 	return false
 }
@@ -157,35 +195,55 @@ func makeOpening(rng *rand.Rand, o options) []engine.Move {
 ///
 /// <summary>
 ///   matchPlayer runs a paired game with a shared opening and returns the
-///   neural side's outcome for both color assignments.
+///   first side's outcome for both color assignments.
 /// </summary>
-/// <param name="full">Full configuration for the neural side.</param>
+/// <param name="a">Configuration for side A (the reported side).</param>
+/// <param name="b">Configuration for side B.</param>
 /// <param name="rng">Generator for opening moves.</param>
 /// <param name="o">Global options.</param>
-/// <returns>The neural outcome per game.</returns>
-func match(full engine.NNConfig, rng *rand.Rand, o options) [2]outcome {
-	plain := engine.NNConfig{}
+/// <returns>The side A outcome per game.</returns>
+func match(a, b engine.NNConfig, rng *rand.Rand, o options) [2]outcome {
 	opening := makeOpening(rng, o)
 	outs := [2]outcome{nnWin, nnWin}
-	whiteNn := rng.Intn(2) == 0
-	outs[0] = classify(playOne(opening, configFor(whiteNn, plain, full), configFor(!whiteNn, plain, full), o), whiteNn)
-	outs[1] = classify(playOne(opening, configFor(!whiteNn, plain, full), configFor(whiteNn, plain, full), o), !whiteNn)
+	whiteA := rng.Intn(2) == 0
+	if o.san {
+		white, black := configFor(whiteA, a, b), configFor(!whiteA, a, b)
+		fmt.Printf("\n=== %s (White) vs %s (Black) ===\n", labelFor(white, a, b, o), labelFor(black, a, b, o))
+	}
+	outs[0] = classify(playOne(opening, configFor(whiteA, a, b), configFor(!whiteA, a, b), o), whiteA)
+	outs[1] = classify(playOne(opening, configFor(!whiteA, a, b), configFor(whiteA, a, b), o), !whiteA)
 	return outs
 }
 
 ///
 /// <summary>
-///   configFor returns the classical or neural config for a side.
+///   labelFor returns which labeled engine a config belongs to.
 /// </summary>
-/// <param name="nnSide">Whether this side uses the neural eval.</param>
-/// <param name="plain">Classical config.</param>
-/// <param name="full">Neural config.</param>
-/// <returns>The chosen config.</returns>
-func configFor(nnSide bool, plain, full engine.NNConfig) engine.NNConfig {
-	if nnSide {
-		return full
+/// <param name="c">Config to identify.</param>
+/// <param name="a">Side A config.</param>
+/// <param name="b">Side B config.</param>
+/// <param name="o">Global options holding the labels.</param>
+/// <returns>The label of the matching side.</returns>
+func labelFor(c engine.NNConfig, a, b engine.NNConfig, o options) string {
+	if c == a {
+		return o.labelA
 	}
-	return plain
+	return o.labelB
+}
+
+///
+/// <summary>
+///   configFor returns one of two evaluation configs for a side.
+/// </summary>
+/// <param name="sideA">Whether this side plays with config a.</param>
+/// <param name="a">Config a used when sideA is true.</param>
+/// <param name="b">Config b used when sideA is false.</param>
+/// <returns>The chosen config.</returns>
+func configFor(sideA bool, a, b engine.NNConfig) engine.NNConfig {
+	if sideA {
+		return a
+	}
+	return b
 }
 
 ///
@@ -223,11 +281,12 @@ type tally struct {
 /// <summary>
 ///   worker runs paired matches until the game cap is reached.
 /// </summary>
-/// <param name="cfg">Neural evaluation config.</param>
+/// <param name="a">Side A evaluation config.</param>
+/// <param name="b">Side B evaluation config.</param>
 /// <param name="o">Global options.</param>
 /// <param name="t">Shared tally.</param>
 /// <param name="w">WaitGroup entry to signal.</param>
-func worker(cfg engine.NNConfig, o options, t *tally, w *sync.WaitGroup) {
+func worker(a, b engine.NNConfig, o options, t *tally, w *sync.WaitGroup) {
 	defer w.Done()
 	rng := rand.New(rand.NewSource(o.seed + t.games.Load()))
 	for {
@@ -235,7 +294,7 @@ func worker(cfg engine.NNConfig, o options, t *tally, w *sync.WaitGroup) {
 		if n > int64(o.games) {
 			return
 		}
-		outs := match(cfg, rng, o)
+		outs := match(a, b, rng, o)
 		for _, or := range outs {
 			switch or {
 			case nnWin:
@@ -260,16 +319,39 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	cfg := engine.NNConfig{Net: net, Blend: float32(o.blend), Scale: float32(o.scale)}
+	mkCfg := func(w string) (engine.NNConfig, error) {
+		n, err := nn.Load(w)
+		if err != nil {
+			return engine.NNConfig{}, err
+		}
+		return engine.NNConfig{Net: n, Blend: float32(o.blend), Scale: float32(o.scale)}, nil
+	}
+	cfgA := engine.NNConfig{Net: net, Blend: float32(o.blend), Scale: float32(o.scale)}
+	cfgB := engine.NNConfig{}
+	label := "classical"
+	o.labelA = filepath.Base(o.weights)
+	o.labelB = label
+	if o.weights2 != "" {
+		cfgB, err = mkCfg(o.weights2)
+		if err != nil {
+			log.Fatal(err)
+		}
+		label = filepath.Base(o.weights2)
+		o.labelB = label
+	}
 	log.Printf("loaded %s (%d params)", o.weights, net.Count())
-	log.Printf("match: classical vs neural blend=%.0f%% scale=%.0f, %d games, %dms/move, depth<=%d",
-		o.blend*100, o.scale, o.games, o.moveMs, o.depth)
+	log.Printf("match: %s(B%d%%/S%.0f) vs %s(B%d%%/S%.0f), %d games, %dms/move, depth<=%d",
+		o.weights, int(o.blend*100), o.scale, label, int(o.blend*100), o.scale, o.games, o.moveMs, o.depth)
 
 	t := &tally{}
+	if o.points {
+		engine.EnablePoints(true)
+		log.Println("points system on")
+	}
 	var wg sync.WaitGroup
 	for i := 0; i < o.cores; i++ {
 		wg.Add(1)
-		go worker(cfg, o, t, &wg)
+		go worker(cfgA, cfgB, o, t, &wg)
 	}
 	wg.Wait()
 
