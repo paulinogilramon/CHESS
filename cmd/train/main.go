@@ -18,6 +18,7 @@ import (
 /// </summary>
 type options struct {
 	data    string
+	init    string
 	out     string
 	epochs  int
 	batch   int
@@ -36,6 +37,7 @@ type options struct {
 func parseOptions() options {
 	var o options
 	flag.StringVar(&o.data, "data", "dataset.bin", "input dataset path")
+	flag.StringVar(&o.init, "init", "", "weights file to continue training from (empty = fresh random init)")
 	flag.StringVar(&o.out, "out", "weights.bin", "output weights path")
 	flag.IntVar(&o.epochs, "epochs", 5, "training epochs")
 	flag.IntVar(&o.batch, "batch", 512, "minibatch size")
@@ -90,7 +92,15 @@ func main() {
 	log.Printf("train %d  val %d", len(train), len(val))
 
 	net := nn.NewNet(o.h1, o.h2, o.seed)
-	log.Printf("network %d->%d->%d->1  params %d", nn.FeatureCount, o.h1, o.h2, net.Count())
+	if o.init != "" {
+		loaded, err := nn.Load(o.init)
+		if err != nil {
+			log.Fatal(err)
+		}
+		net = loaded
+		log.Printf("resumed from %s", o.init)
+	}
+	log.Printf("network %d->%d->%d->1  params %d", nn.FeatureCount, net.H1, net.H2, net.Count())
 
 	cfg := nn.DefaultConfig()
 	cfg.Epochs = o.epochs

@@ -31,6 +31,8 @@ type options struct {
 	out     string
 	mirror  bool
 	noise   float64
+	novelty float64
+	pos     int64
 	seed    int64
 }
 
@@ -48,7 +50,9 @@ func parseOptions() options {
 	flag.IntVar(&o.maxPly, "maxply", 160, "game length cap (discards the game)")
 	flag.StringVar(&o.out, "out", "dataset.bin", "output dataset path")
 	flag.BoolVar(&o.mirror, "mirror", true, "also emit the color-mirrored position")
-	flag.Float64Var(&o.noise, "noise", 0.2, "probability of playing a random legal move")
+	flag.Float64Var(&o.noise, "noise", 0.2, "probability of playing a random opening move")
+	flag.Float64Var(&o.novelty, "novelty", 1.0, "probability of playing the least-visited legal move")
+	flag.Int64Var(&o.pos, "pos", 0, "minimum positions to emit before stopping (0 = use games)")
 	flag.Int64Var(&o.seed, "seed", 1, "worker seed offset")
 	flag.Parse()
 	return o
@@ -89,14 +93,87 @@ func mirrorBoard(b [64]int8) [64]int8 {
 
 ///
 /// <summary>
+///   seenPos counts how many self-play positions have been visited across all
+///   workers so the novelty selector can force under-represented lines.
+/// </summary>
+type seenPos struct {
+	mu     sync.Mutex
+	counts map[[67]byte]int
+}
+
+///
+/// <summary>
+///   newSeenPos returns an empty shared position counter.
+/// </summary>
+/// <returns>A zeroed counter with an allocated map.</returns>
+func newSeenPos() *seenPos {
+	return &seenPos{counts: make(map[[67]byte]int)}
+}
+
+///
+/// <summary>
+///   add records one more visit to a position key.
+/// </summary>
+/// <param name="k">Position fingerprint.</param>
+func (p *seenPos) add(k [67]byte) {
+	p.mu.Lock()
+	p.counts[k]++
+	p.mu.Unlock()
+}
+
+///
+/// <summary>
+///   count returns how often a position key has been visited so far.
+/// </summary>
+/// <param name="k">Position fingerprint.</param>
+/// <returns>The visit count.</returns>
+func (p *seenPos) count(k [67]byte) int {
+	p.mu.Lock()
+	c := p.counts[k]
+	p.mu.Unlock()
+	return c
+}
+
+///
+/// <summary>
+///   pickDiverse forces novelty: from the legal moves it picks the one whose
+///   resulting position has been seen the fewest times, breaking ties at
+///   random, so every iteration plays distinct moves.
+/// </summary>
+/// <param name="s">Position to move in.</param>
+/// <param name="moves">Legal moves.</param>
+/// <param name="global">Shared position counter.</param>
+/// <param name="rng">Random source for tie-breaking.</param>
+/// <returns>The least-visited legal move.</returns>
+func pickDiverse(s *engine.State, moves []engine.Move, global *seenPos, rng *rand.Rand) engine.Move {
+	bestCount := int(^uint(0) >> 1)
+	cands := make([]engine.Move, 0, len(moves))
+	for _, m := range moves {
+		u := engine.MakeMove(s, m)
+		c := global.count(posKey(s))
+		engine.UndoMove(s, m, u)
+		if c < bestCount {
+			bestCount = c
+			cands = cands[:1]
+			cands[0] = m
+		} else if c == bestCount {
+			cands = append(cands, m)
+		}
+	}
+	return cands[rng.Intn(len(cands))]
+}
+
+///
+/// <summary>
 ///   playGame plays one self-play game and returns every position paired with
 ///   the final result from White's perspective. Games hitting the ply cap are
 ///   discarded to avoid mislabeled truncated positions.
 /// </summary>
 /// <param name="rng">Random source for the opening.</param>
 /// <param name="o">Global options.</param>
+/// <param name="global">Shared position counter driving novelty.</param>
 /// <returns>The collected positions, the White result, and whether to discard.</returns>
-func playGame(rng *rand.Rand, o options) ([]nn.RawSample, float32, bool) {
+func playGame(rng *rand.Rand, o options, global *seenPos) ([]nn.RawSample, float32, bool) {
 	s := engine.NewStart()
 	moves := engine.GenerateLegal(s)
 
@@ -133,10 +210,13 @@ func playGame(rng *rand.Rand, o options) ([]nn.RawSample, float32, bool) {
 			break
 		}
 		seen[key]++
+		global.add(key)
 
 		out = append(out, nn.RawSample{Board: s.Board, Stm: int8(s.Stm)})
 		m := engine.FindBestMoveWith(s, o.depth, 0, engine.NNConfig{})
-		if ply < 24 && rng.Float64() < o.noise && len(moves) > 0 {
+		if len(moves) > 0 && rng.Float64() < o.novelty {
+			m = pickDiverse(s, moves, global, rng)
+		} else if ply < 24 && rng.Float64() < o.noise && len(moves) > 0 {
 			m = moves[rng.Intn(len(moves))]
 		}
 		engine.MakeMove(s, m)
@@ -184,17 +264,21 @@ type stats struct {
 /// </summary>
 /// <param name="o">Global options.</param>
 /// <param name="st">Shared statistics.</param>
+/// <param name="global">Shared position counter driving novelty.</param>
 /// <param name="out">Sample channel.</param>
 /// <param name="w">WaitGroup entry to signal.</param>
-func worker(o options, st *stats, out chan<- []nn.RawSample, w *sync.WaitGroup) {
+func worker(o options, st *stats, global *seenPos, out chan<- []nn.RawSample, w *sync.WaitGroup) {
 	defer w.Done()
 	rng := rand.New(rand.NewSource(o.seed + st.games.Load()))
 	for {
+		if o.pos > 0 && st.positions.Load() >= o.pos {
+			return
+		}
 		n := st.games.Add(1)
 		if n > int64(o.games) {
 			return
 		}
-		samples, result, discard := playGame(rng, o)
+		samples, result, discard := playGame(rng, o, global)
 		if discard {
 			st.discarded.Add(1)
 			continue
@@ -225,9 +309,10 @@ func main() {
 	out := make(chan []nn.RawSample, o.cores*2)
 	var wg sync.WaitGroup
 	st := &stats{}
+	global := newSeenPos()
 	for i := 0; i < o.cores; i++ {
 		wg.Add(1)
-		go worker(o, st, out, &wg)
+		go worker(o, st, global, out, &wg)
 	}
 
 	go func() {
