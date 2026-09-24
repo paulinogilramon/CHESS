@@ -7,9 +7,11 @@ package main
 import (
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"chess/engine"
 
@@ -64,6 +66,10 @@ func init() {
 	}
 	whiteCfg = loadCfg(wPath)
 	blackCfg = loadCfg(bPath)
+	if autoMode {
+		engine.SetExploration(0.5)
+		log.Println("exploration on")
+	}
 	if !autoMode && blackCfg.Net != nil {
 		engine.SetDefaultNN(blackCfg)
 		log.Println("neural evaluation loaded")
@@ -87,6 +93,12 @@ func isAutoExe() bool {
 	return false
 }
 
+/// <summary>
+///   autoOpenMax is the number of random opening plies before the engines
+///   start searching, so AI vs AI games differ every match.
+/// </summary>
+const autoOpenMax = 5
+
 ///
 /// <summary>
 ///   weightsPath resolves weights.bin next to the executable, falling back to
@@ -96,7 +108,7 @@ func isAutoExe() bool {
 func weightsPath() string {
 	if exe, err := os.Executable(); err == nil {
 		p := filepath.Join(filepath.Dir(exe), "weights.bin")
-		if _, err := os.Stat(p); err == nil {
+		if fileExists(p) {
 			return p
 		}
 	}
@@ -232,7 +244,27 @@ func newGame() *Game {
 		auto:     autoMode,
 	}
 	g.resetLogs()
+	if g.auto {
+		g.randomizeOpening()
+	}
 	return g
+}
+
+///
+/// <summary>
+///   randomizeOpening plays a short sequence of random legal moves from the
+///   starting position so AI vs AI games do not repeat the same line.
+/// </summary>
+func (g *Game) randomizeOpening() {
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	n := rng.Intn(autoOpenMax + 1)
+	for i := 0; i < n; i++ {
+		moves := engine.GenerateLegal(g.board)
+		if len(moves) == 0 {
+			break
+		}
+		engine.MakeMove(g.board, moves[rng.Intn(len(moves))])
+	}
 }
 
 ///
@@ -266,6 +298,9 @@ func (g *Game) Reset() {
 	g.anim = nil
 	g.lastFrom, g.lastTo = -1, -1
 	g.resetLogs()
+	if g.auto {
+		g.randomizeOpening()
+	}
 }
 
 func (g *Game) Undo() {

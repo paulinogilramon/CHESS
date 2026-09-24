@@ -437,6 +437,7 @@ func FindBestMoveWith(s *State, maxDepth int, ms int, cfg NNConfig) Move {
 	sc.orderMoves(s, moves)
 
 	best := moves[0]
+	bestVal := -infScore
 	for d := 1; d <= maxDepth; d++ {
 		perm := make([]Move, 0, len(moves))
 		perm = append(perm, best)
@@ -447,10 +448,12 @@ func FindBestMoveWith(s *State, maxDepth int, ms int, cfg NNConfig) Move {
 		}
 		alpha, beta := -infScore, infScore
 		curBest := perm[0]
+		scores := make([]rootScore, 0, len(perm))
 		for _, m := range perm {
 			u := MakeMove(s, m)
 			val := -sc.alphaBeta(s, d-1, 1, -beta, -alpha) + sc.moveBonus(m)
 			UndoMove(s, m, u)
+			scores = append(scores, rootScore{m, val})
 			if sc.abort {
 				return best
 			}
@@ -460,6 +463,10 @@ func FindBestMoveWith(s *State, maxDepth int, ms int, cfg NNConfig) Move {
 			}
 		}
 		best = curBest
+		bestVal = alpha
+		if d == maxDepth && exploration() > 0 {
+			return pickRootMove(scores, bestVal, best)
+		}
 	}
 	return best
 }

@@ -36,6 +36,7 @@ type options struct {
 	seed     int64
 	san      bool
 	points   bool
+	explore  float64
 	labelA   string
 	labelB   string
 }
@@ -60,6 +61,7 @@ func parseOptions() options {
 	flag.Int64Var(&o.seed, "seed", 7, "opening seed")
 	flag.BoolVar(&o.san, "san", false, "print each move live (use cores=1, games=1)")
 	flag.BoolVar(&o.points, "points", false, "enable the move/capture/promotion/check points system")
+	flag.Float64Var(&o.explore, "explore", 0, "epsilon-greedy variety among near-best moves")
 	flag.Parse()
 	return o
 }
@@ -347,6 +349,10 @@ func main() {
 	if o.points {
 		engine.EnablePoints(true)
 		log.Println("points system on")
+	}
+	if o.explore > 0 {
+		engine.SetExploration(o.explore)
+		log.Printf("exploration on (%.0f%%)", o.explore*100)
 	}
 	var wg sync.WaitGroup
 	for i := 0; i < o.cores; i++ {
