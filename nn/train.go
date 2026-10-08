@@ -30,15 +30,18 @@ type Sample struct {
 /// <param name="Beta2">Adam second-moment decay.</param>
 /// <param name="Eps">Adam numerical stabiliser.</param>
 /// <param name="Seed">Seed for the shuffle generator.</param>
+/// <param name="Workers">Number of parallel gradient workers, 0 for all cores.</param>
+/// <param name="MaxSteps">Stop after this many Adam updates when greater than zero; zero runs every epoch.</param>
 type TrainConfig struct {
-	Epochs  int
-	Batch   int
-	LR      float32
-	Beta1   float32
-	Beta2   float32
-	Eps     float32
-	Seed    int64
-	Workers int
+	Epochs   int
+	Batch    int
+	LR       float32
+	Beta1    float32
+	Beta2    float32
+	Eps      float32
+	Seed     int64
+	Workers  int
+	MaxSteps int
 }
 
 ///
@@ -325,15 +328,21 @@ func Train(n *Net, samples []Sample, val []Sample, cfg TrainConfig, progress fun
 	if cfg.Batch <= 0 {
 		cfg.Batch = 512
 	}
+	if len(samples) == 0 {
+		return nil
+	}
 	rng := newRand(cfg.Seed)
 	g := newGradSet(n)
 	a := newAdam(n)
 	workers := trainWorkers(cfg, len(samples))
-	epochLoss := make([]float32, cfg.Epochs)
+	var epochLoss []float32
+	steps := 0
+	aborted := false
 	for epoch := 0; epoch < cfg.Epochs; epoch++ {
 		shuffle(samples, rng)
 		total := float64(0)
 		count := 0
+		aborted = false
 		for start := 0; start < len(samples); start += cfg.Batch {
 			end := start + cfg.Batch
 			if end > len(samples) {
@@ -397,11 +406,19 @@ func Train(n *Net, samples []Sample, val []Sample, cfg TrainConfig, progress fun
 
 			total += batchLoss
 			count += applied
+			steps++
 			if progress != nil {
 				progress(epoch, start/cfg.Batch, float32(batchLoss/float64(applied)))
 			}
+			if cfg.MaxSteps > 0 && steps >= cfg.MaxSteps {
+				aborted = true
+				break
+			}
 		}
-		epochLoss[epoch] = float32(total / float64(count))
+		epochLoss = append(epochLoss, float32(total/float64(count)))
+		if aborted {
+			break
+		}
 	}
 	return epochLoss
 }

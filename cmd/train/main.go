@@ -29,6 +29,7 @@ type options struct {
 	valFrac float64
 	seed    int64
 	workers int
+	steps   int
 }
 
 ///
@@ -49,6 +50,7 @@ func parseOptions() options {
 	flag.Float64Var(&o.valFrac, "val", 0.05, "fraction of samples held out for validation")
 	flag.Int64Var(&o.seed, "seed", 0, "shuffle and init seed (0 = random)")
 	flag.IntVar(&o.workers, "workers", 0, "parallel gradient workers (0 = all cores)")
+	flag.IntVar(&o.steps, "steps", 0, "stop after this many Adam updates (0 = use epochs)")
 	flag.Parse()
 	if !flagSet("seed") {
 		o.seed = time.Now().UnixNano()
@@ -131,11 +133,16 @@ func main() {
 	cfg.LR = float32(o.lr)
 	cfg.Seed = o.seed
 	cfg.Workers = o.workers
+	if o.steps > 0 {
+		cfg.MaxSteps = o.steps
+		cfg.Epochs = 1 << 31
+		log.Printf("step-limited run: %d Adam updates", o.steps)
+	}
 
 	step := 0
 	losses := nn.Train(net, train, val, cfg, func(epoch, s int, loss float32) {
 		step++
-		if step%10 == 0 {
+		if step%100 == 0 {
 			fmt.Printf("epoch %d  step %d  loss %.4f\n", epoch, s, loss)
 		}
 	})
