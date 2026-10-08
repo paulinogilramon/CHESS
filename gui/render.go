@@ -90,6 +90,10 @@ func loadFaces() {
 func (g *Game) Draw(screen *ebiten.Image) {
 	loadFaces()
 	screen.Fill(colBg)
+	if g.choosing {
+		drawSelect(screen, g)
+		return
+	}
 	drawSquares(screen, g)
 	drawPieces(screen, g)
 	drawAnim(screen, g)

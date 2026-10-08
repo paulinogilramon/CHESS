@@ -52,20 +52,8 @@ func init() {
 	whiteName = baseName(wPath)
 	blackName = baseName(bPath)
 
-	loadCfg := func(path string) engine.NNConfig {
-		if _, err := os.Stat(path); err != nil {
-			log.Println("neural weights not found:", path)
-			return engine.NNConfig{}
-		}
-		net, err := engine.LoadNN(path, 0.6, 600)
-		if err != nil {
-			log.Println("neural weights load failed:", path, err)
-			return engine.NNConfig{}
-		}
-		return engine.NNConfig{Net: net, Blend: 0.6, Scale: 600}
-	}
-	whiteCfg = loadCfg(wPath)
-	blackCfg = loadCfg(bPath)
+	whiteCfg = loadCfgPath(wPath)
+	blackCfg = loadCfgPath(bPath)
 	if autoMode {
 		engine.SetExploration(0.5)
 		log.Println("exploration on")
@@ -74,6 +62,26 @@ func init() {
 		engine.SetDefaultNN(blackCfg)
 		log.Println("neural evaluation loaded")
 	}
+}
+
+///
+/// <summary>
+///   loadCfgPath loads a weights file into an explicit neural evaluation
+///   config, logging and falling back to the classical eval on failure.
+/// </summary>
+/// <param name="path">Weights file path.</param>
+/// <returns>The evaluation config, or a zero value on error.</returns>
+func loadCfgPath(path string) engine.NNConfig {
+	if _, err := os.Stat(path); err != nil {
+		log.Println("neural weights not found:", path)
+		return engine.NNConfig{}
+	}
+	net, err := engine.LoadNN(path, 0.6, 600)
+	if err != nil {
+		log.Println("neural weights load failed:", path, err)
+		return engine.NNConfig{}
+	}
+	return engine.NNConfig{Net: net, Blend: 0.6, Scale: 600}
 }
 
 ///
@@ -227,6 +235,13 @@ type Game struct {
 	auto      bool
 	thinking  bool
 	aiCh      chan engine.Move
+
+	choosing  bool
+	files     []string
+	selWhite  int
+	selBlack  int
+	selStep   int
+	selCursor int
 }
 
 ///
@@ -245,7 +260,17 @@ func newGame() *Game {
 	}
 	g.resetLogs()
 	if g.auto {
-		g.randomizeOpening()
+		g.files = listWeights()
+		g.selWhite, g.selBlack = -1, -1
+		if i := findByName(g.files, "weights.bin"); i >= 0 {
+			g.selWhite = i
+		}
+		if i := findByName(g.files, "weights_old.bin"); i >= 0 {
+			g.selBlack = i
+		}
+		g.selStep = 0
+		g.choosing = true
+		g.status = "Selecciona las IA que jugaran."
 	}
 	return g
 }
@@ -335,6 +360,13 @@ func (g *Game) Undo() {
 /// </summary>
 /// <returns>An error to terminate the application, or nil.</returns>
 func (g *Game) Update() error {
+	if g.choosing {
+		g.updateSelect()
+		if g.quit {
+			return ebiten.Termination
+		}
+		return nil
+	}
 	g.handleKeys()
 	if g.quit {
 		return ebiten.Termination
@@ -717,7 +749,6 @@ func (g *Game) sortedLogs() string {
 	}
 	return line
 }
-
 
 func main() {
 	g := newGame()
