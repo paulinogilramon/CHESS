@@ -14,6 +14,8 @@ go run ./cmd/arena -weights wN.bin -games 15 -cores 2 -seed 7 -ms 30
 ```
 
 - Aperturas aleatorias fijas (mismo `seed` para todas las redes → aperturas compartidas).
+- Nota: desde el 08/10/2026 `arena` usa semilla **aleatoria por defecto** (`-seed N` para fijarla y reproducir).
+  Los resultados de abajo se obtuvieron con `-seed 7`.
 - Partidas emparejadas por colores (cada apertura se juega con cada color).
 - 30 ms/movimiento, profundidad ≤ 6, tope 240 plies.
 - Score = (victorias + empates/2) / partidas. 50% = igualado con el clásico.

@@ -58,12 +58,31 @@ func parseOptions() options {
 	flag.IntVar(&o.openMax, "open", 4, "maximum random opening plies")
 	flag.IntVar(&o.maxPly, "maxply", 240, "game length cap (counted as a draw)")
 	flag.IntVar(&o.cores, "cores", 4, "parallel worker goroutines")
-	flag.Int64Var(&o.seed, "seed", 7, "opening seed")
+	flag.Int64Var(&o.seed, "seed", 0, "opening seed (0 = random)")
 	flag.BoolVar(&o.san, "san", false, "print each move live (use cores=1, games=1)")
 	flag.BoolVar(&o.points, "points", false, "enable the move/capture/promotion/check points system")
 	flag.Float64Var(&o.explore, "explore", 0, "epsilon-greedy variety among near-best moves")
 	flag.Parse()
+	if !flagSet("seed") {
+		o.seed = time.Now().UnixNano()
+	}
 	return o
+}
+
+///
+/// <summary>
+///   flagSet reports whether the named command-line flag was explicitly set.
+/// </summary>
+/// <param name="name">Flag name to look up.</param>
+/// <returns>True when the user provided the flag.</returns>
+func flagSet(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 ///
@@ -344,6 +363,7 @@ func main() {
 	log.Printf("loaded %s (%d params)", o.weights, net.Count())
 	log.Printf("match: %s(B%d%%/S%.0f) vs %s(B%d%%/S%.0f), %d games, %dms/move, depth<=%d",
 		o.weights, int(o.blend*100), o.scale, label, int(o.blend*100), o.scale, o.games, o.moveMs, o.depth)
+	log.Printf("seed=%d", o.seed)
 
 	t := &tally{}
 	if o.points {

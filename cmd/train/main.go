@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"time"
 
 	"chess/nn"
 )
@@ -46,10 +47,29 @@ func parseOptions() options {
 	flag.IntVar(&o.h1, "h1", 64, "first hidden layer width")
 	flag.IntVar(&o.h2, "h2", 32, "second hidden layer width")
 	flag.Float64Var(&o.valFrac, "val", 0.05, "fraction of samples held out for validation")
-	flag.Int64Var(&o.seed, "seed", 42, "shuffle seed")
+	flag.Int64Var(&o.seed, "seed", 0, "shuffle and init seed (0 = random)")
 	flag.IntVar(&o.workers, "workers", 0, "parallel gradient workers (0 = all cores)")
 	flag.Parse()
+	if !flagSet("seed") {
+		o.seed = time.Now().UnixNano()
+	}
 	return o
+}
+
+///
+/// <summary>
+///   flagSet reports whether the named command-line flag was explicitly set.
+/// </summary>
+/// <param name="name">Flag name to look up.</param>
+/// <returns>True when the user provided the flag.</returns>
+func flagSet(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 ///
@@ -83,6 +103,7 @@ func splitValidation(samples []nn.Sample, frac float64) ([]nn.Sample, []nn.Sampl
 /// </summary>
 func main() {
 	o := parseOptions()
+	log.Printf("seed=%d", o.seed)
 	log.Printf("loading %s", o.data)
 	samples, err := nn.LoadDataset(o.data)
 	if err != nil {

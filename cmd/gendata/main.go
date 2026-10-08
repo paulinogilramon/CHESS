@@ -66,9 +66,28 @@ func parseOptions() options {
 	flag.Int64Var(&o.pos, "pos", 0, "minimum positions to emit before stopping (0 = use games)")
 	flag.BoolVar(&o.points, "points", false, "enable the points system during self-play")
 	flag.StringVar(&o.target, "target", "result", "training labels: result or points")
-	flag.Int64Var(&o.seed, "seed", 1, "worker seed offset")
+	flag.Int64Var(&o.seed, "seed", 0, "worker seed offset (0 = random)")
 	flag.Parse()
+	if !flagSet("seed") {
+		o.seed = time.Now().UnixNano()
+	}
 	return o
+}
+
+///
+/// <summary>
+///   flagSet reports whether the named command-line flag was explicitly set.
+/// </summary>
+/// <param name="name">Flag name to look up.</param>
+/// <returns>True when the user provided the flag.</returns>
+func flagSet(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 ///
@@ -350,6 +369,7 @@ func worker(o options, st *stats, global *seenPos, out chan<- []nn.RawSample, w 
 /// </summary>
 func main() {
 	o := parseOptions()
+	log.Printf("seed=%d", o.seed)
 	if o.games <= 0 || o.cores <= 0 {
 		log.Fatal("games and cores must be positive")
 	}
