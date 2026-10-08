@@ -2,7 +2,7 @@
 
 Fecha de la evaluación: 08/10/2026
 Redes evaluadas: `w1.bin` … `w5.bin` (arquitectura 128→64→1, ~107k parámetros, entrenadas el 22/09/2026).
-`weights.bin` (la que carga el motor) es una copia idéntica de `w5.bin`.
+`weights.bin` (la que carga el motor) era una copia de `w5.bin`; desde el 08/10/2026 es una copia de `w3.bin`, la mejor red.
 
 ## Metodología
 
@@ -48,7 +48,8 @@ go run ./cmd/arena -weights wN.bin -games 15 -cores 2 -seed 7 -ms 30
 ## Conclusión
 
 - **`w3.bin` es la mejor red de las entrenadas** y única con score ≥ 50% frente al clásico en el desempate.
-- La red activa (`weights.bin` = `w5.bin`) queda segunda, con ~12 puntos porcentuales menos.
+- `w5.bin` queda segunda, con ~12 puntos porcentuales menos.
+- **`weights.bin` ahora es `w3.bin`** (promovida el 08/10/2026).
 - Muestra limitada (~40 partidas por líder); para mayor confianza, repetir con más partidas y semillas.
 
 ## Cronología de entrenamiento
