@@ -47,12 +47,43 @@ go run ./cmd/arena -weights wN.bin -games 15 -cores 2 -seed 7 -ms 30
 | w1 | 12 | 25,0% |
 | w2 | 12 | 16,7% |
 
+## Round-robin IA vs IA (08/10/2026)
+
+Comparación directa red contra red con `arena -weights A.bin -weights2 B.bin`, **50 partidas por
+enfrentamiento** (25 por color), `-ms 30`, profundidad ≤ 6 y semillas aleatorias. Cada red juega
+4 enfrentamientos → **200 partidas por red**.
+
+```powershell
+go run ./cmd/arena -weights wA.bin -weights2 wB.bin -games 25 -cores 1 -ms 30
+```
+
+Matriz de enfrentamientos (victorias de la fila sobre la columna, de 50 partidas):
+
+| Fila \ Col | w1 | w2 | w3 | w4 | w5 |
+|---|---|---|---|---|---|
+| **w1** | — | 26 | 26 | 29 | 24 |
+| **w2** | 24 | — | 19 | 19 | 21 |
+| **w3** | 24 | 31 | — | 28 | 29 |
+| **w4** | 21 | 31 | 22 | — | 23 |
+| **w5** | 26 | 29 | 21 | 27 | — |
+
+Clasificación round-robin (200 partidas cada una, sin empates):
+
+| Puesto | Red | Puntuación |
+|---|---|---|
+| 1 | **w3** | **56,0%** |
+| 2 | w1 | 52,5% |
+| 3 | w5 | 51,5% |
+| 4 | w4 | 48,5% |
+| 5 | w2 | 41,5% |
+
 ## Conclusión
 
-- **`w3.bin` es la mejor red de las entrenadas** y única con score ≥ 50% frente al clásico en el desempate.
-- `w5.bin` queda segunda, con ~12 puntos porcentuales menos.
-- **`weights.bin` ahora es `w3.bin`** (promovida el 08/10/2026).
-- Muestra limitada (~40 partidas por líder); para mayor confianza, repetir con más partidas y semillas.
+- **`w3.bin` es la mejor red de las entrenadas** tanto frente al clásico como en el round-robin IA vs IA.
+- Le siguen `w1` y `w5`, muy igualadas; `w2` es claramente la más débil.
+- Una muestra de solo 20 partidas por enfrentamiento daba `w5` como líder: es ruido estadístico.
+  Con 50 por enfrentamiento el resultado converge y confirma a `w3`.
+- **`weights.bin` es `w3.bin`** (promovida el 08/10/2026), por lo que el motor ya usa la mejor red.
 
 ## Cronología de entrenamiento
 
