@@ -85,6 +85,37 @@ Clasificación round-robin (200 partidas cada una, sin empates):
   Con 50 por enfrentamiento el resultado converge y confirma a `w3`.
 - **`weights.bin` es `w3.bin`** (promovida el 08/10/2026), por lo que el motor ya usa la mejor red.
 
+## Redes nuevas con `-steps` (09/10/2026)
+
+Entrenadas el 08–09/10/2026 con el nuevo flag `-steps` (presupuesto exacto de actualizaciones Adam):
+`w1_1m.bin` … `w4_1m.bin` (mismo archivo de pesos, 106.753 parámetros).
+
+### Vs. clásico (30 partidas por red, `-seed 7 -ms 30`)
+
+| Red | Score | Red antigua (misma data) | Score antigua |
+|---|---|---|---|
+| w4_1m | **46,7%** | w4 | 33,3% |
+| w2_1m | 36,7% | w2 | 16,7% |
+| w1_1m | 33,3% | w1 | 25,0% |
+| w3_1m | 30,0% | w3 | **53,3%** (referencia hoy) |
+
+### Head-to-head vs `w3` (50 partidas por red, semillas aleatorias)
+
+| Red | Score vs w3 |
+|---|---|
+| w1_1m | 46,0% |
+| w4_1m | 46,0% |
+| w3_1m | 42,0% |
+| w2_1m | 38,0% |
+
+### Conclusión
+
+- Las redes nuevas **mejoran frente a sus versiones antiguas** en w1, w2 y w4 (w4_1m es la mejor
+  de las nuevas con 46,7% vs. el clásico).
+- **Ninguna supera a `w3`**: todas quedan por debajo del 50% en el duelo directo contra ella, y
+  `w3_1m` es claramente peor que la `w3` original.
+- `weights.bin` sigue siendo `w3.bin`; no procede ningún cambio de promoción.
+
 ## Cronología de entrenamiento
 
 | Red | Dataset | Fecha |
